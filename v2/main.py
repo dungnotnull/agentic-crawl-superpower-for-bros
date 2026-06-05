@@ -229,7 +229,7 @@ async def main() -> None:
         log_file = run_dir / "dashboard.log"
         with open(log_file, "w") as log:
             dashboard_proc = subprocess.Popen(
-                [sys.executable, "dashboard.py"],
+                [sys.executable, "dashboard.py", "3001"],
                 cwd=str(Path(__file__).parent),
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -240,7 +240,7 @@ async def main() -> None:
         if dashboard_proc.poll() is not None:
             _safe_print(f"  [DASHBOARD] Failed to start - see {log_file}")
         else:
-            _safe_print(f"  [DASHBOARD] Live dashboard at http://localhost:8000")
+            _safe_print(f"  [DASHBOARD] Live dashboard at http://localhost:3001")
     except Exception as e:
         _safe_print(f"  [DASHBOARD] Could not auto-start ({e}) - run 'python dashboard.py' manually")
     _safe_print()

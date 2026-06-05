@@ -126,7 +126,9 @@ This contacts **14 free proxy providers**, downloads Japanese proxy lists, verif
 ### 3. Run the Crawler
 
 ```bash
-# Crawl with defaults (unlimited jobs, headless)
+cd v2
+
+# Crawl with defaults (auto-starts dashboard at localhost:3001)
 python main.py
 
 # Crawl until 240 jobs

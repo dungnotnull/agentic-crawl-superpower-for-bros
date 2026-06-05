@@ -40,7 +40,7 @@ print = safe_print
 # Path configuration
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
-DEFAULT_PORT = 8000
+DEFAULT_PORT = 3001
 
 # Embedded SPA — English UI, multi-site aware
 HTML_UI = """<!DOCTYPE html>
