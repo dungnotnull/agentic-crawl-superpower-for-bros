@@ -226,15 +226,23 @@ async def main() -> None:
     dashboard_proc = None
     try:
         import subprocess
-        dashboard_proc = subprocess.Popen(
-            [sys.executable, "dashboard.py"],
-            cwd=str(Path(__file__).parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        _safe_print(f"  [DASHBOARD] Live dashboard started at http://localhost:8000")
-    except Exception:
-        _safe_print(f"  [DASHBOARD] Could not auto-start - run 'python dashboard.py' manually")
+        log_file = run_dir / "dashboard.log"
+        with open(log_file, "w") as log:
+            dashboard_proc = subprocess.Popen(
+                [sys.executable, "dashboard.py"],
+                cwd=str(Path(__file__).parent),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+        # Give it a moment to start
+        import time
+        time.sleep(0.5)
+        if dashboard_proc.poll() is not None:
+            _safe_print(f"  [DASHBOARD] Failed to start - see {log_file}")
+        else:
+            _safe_print(f"  [DASHBOARD] Live dashboard at http://localhost:8000")
+    except Exception as e:
+        _safe_print(f"  [DASHBOARD] Could not auto-start ({e}) - run 'python dashboard.py' manually")
     _safe_print()
 
     # Create engine and run - THE LOOP NEVER BREAKS

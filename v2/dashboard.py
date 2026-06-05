@@ -403,6 +403,7 @@ HTML_UI = """<!DOCTYPE html>
         let filteredJobs = [];
         let selectedJob = null;
         let selectedSessionId = '';
+        let autoRefreshTimer = null;
 
         const sessionSelect = document.getElementById('session-select');
         const searchInput = document.getElementById('search-input');
@@ -459,7 +460,8 @@ HTML_UI = """<!DOCTYPE html>
                     const date = new Date(s.crawled_at);
                     const formattedDate = date.toLocaleString('en-US');
                     const site = s.site_name || 'unknown';
-                    return `<option value="${s.id}">${formattedDate} — ${s.total_jobs} Jobs [${site}]</option>`;
+                    const liveLabel = s.status === 'running' ? ' [LIVE]' : '';
+                    return `<option value="${s.id}">${formattedDate} — ${s.total_jobs} Jobs [${site}]${liveLabel}</option>`;
                 }).join('');
                 loadSession(sessions[0].id);
             } catch (err) {
@@ -476,9 +478,13 @@ HTML_UI = """<!DOCTYPE html>
             const proxiesHtml = session.proxies_used && session.proxies_used.length > 0
                 ? session.proxies_used.map(p => `<span class="metadata-val" style="margin-top:4px;">${p}</span>`).join('')
                 : '<span class="metadata-val">Local / Fallback</span>';
+            const isRunning = session.status === 'running';
+            const statusBadge = isRunning
+                ? '<span style="background:#10b981;color:#000;padding:2px 8px;border-radius:12px;font-size:0.7rem;font-weight:700;margin-left:8px;">LIVE</span>'
+                : '';
             metadataDetails.innerHTML = `
                 <div class="metadata-item">
-                    <div class="metadata-label">Run ID:</div>
+                    <div class="metadata-label">Run ID:${statusBadge}</div>
                     <div class="metadata-val">${session.id}</div>
                 </div>
                 <div class="metadata-item">
@@ -494,10 +500,21 @@ HTML_UI = """<!DOCTYPE html>
                     <div class="metadata-val">${new Date(session.crawled_at).toLocaleString('en-US')}</div>
                 </div>
                 <div class="metadata-item">
+                    <div class="metadata-label">Blocked:</div>
+                    <div class="metadata-val">${session.blocked_permanent || 0} permanent / ${session.blocked_retrying || 0} retrying</div>
+                </div>
+                <div class="metadata-item">
                     <div class="metadata-label">Proxies used:</div>
                     <div style="display:flex; flex-direction:column; gap:4px;">${proxiesHtml}</div>
                 </div>
             `;
+
+            // Auto-refresh for running crawls
+            clearAutoRefresh();
+            if (isRunning) {
+                autoRefreshTimer = setInterval(() => refreshLiveSession(sessionId), 5000);
+            }
+
             searchInput.value = '';
             try {
                 jobsList.innerHTML = '<div class="no-data"><p>Loading jobs...</p></div>';
@@ -632,6 +649,41 @@ HTML_UI = """<!DOCTYPE html>
             openTabBtn.style.display = 'none';
         }
 
+        function clearAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+        }
+
+        async function refreshLiveSession(sessionId) {
+            try {
+                const resp = await fetch('/api/sessions');
+                const updatedSessions = await resp.json();
+                const session = updatedSessions.find(s => s.id === sessionId);
+                if (session) {
+                    statJobs.innerText = session.total_jobs;
+                    statPages.innerText = session.pages_crawled;
+                    // Reload jobs silently
+                    const jobsResp = await fetch(`/api/jobs/${sessionId}`);
+                    const newJobs = await jobsResp.json();
+                    if (newJobs.length !== currentJobs.length) {
+                        currentJobs = newJobs;
+                        filteredJobs = [...currentJobs];
+                        renderJobsList();
+                    }
+                    if (session.status !== 'running') {
+                        clearAutoRefresh();
+                        // Reload full session info
+                        sessions = updatedSessions;
+                        loadSession(sessionId);
+                    }
+                }
+            } catch (e) {
+                // Silently ignore refresh errors
+            }
+        }
+
         window.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
@@ -667,37 +719,74 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             sessions = []
             if OUTPUT_DIR.exists():
-                for item in OUTPUT_DIR.iterdir():
-                    if item.is_dir() and item.name.startswith("run_"):
-                        meta_file = item / "metadata.json"
-                        meta = {}
-                        if meta_file.exists():
+                for item in sorted(OUTPUT_DIR.iterdir(), reverse=True):
+                    if not item.is_dir() or not item.name.startswith("run_"):
+                        continue
+                    sid = item.name
+                    ckpt_file = item / "checkpoint.json"
+                    jobs_file = item / "jobs.json"
+                    meta_file = item / "metadata.json"
+                    meta = {}
+
+                    # Try metadata first (final crawl)
+                    if meta_file.exists():
+                        try:
+                            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
+
+                    # Try checkpoint (live crawl or completed)
+                    if ckpt_file.exists():
+                        try:
+                            ckpt = json.loads(ckpt_file.read_text(encoding="utf-8"))
+                            if not meta.get("total_jobs"):
+                                meta["total_jobs"] = ckpt.get("total_jobs_extracted", 0)
+                            if not meta.get("target_url"):
+                                meta["target_url"] = ckpt.get("target_url", "")
+                            blocked = sum(
+                                1 for b in ckpt.get("blocked_jobs", [])
+                                if b.get("status") == "permanently_blocked"
+                            )
+                            retrying = sum(
+                                1 for b in ckpt.get("blocked_jobs", [])
+                                if b.get("status") != "permanently_blocked"
+                            )
+                            meta["blocked_permanent"] = blocked
+                            meta["blocked_retrying"] = retrying
+                            # Detect if crawl is still running
+                            if ckpt.get("total_jobs_extracted", 0) > 0:
+                                if not jobs_file.exists():
+                                    meta["status"] = "running"
+                                elif ckpt.get("target_jobs") and ckpt.get("total_jobs_extracted", 0) < ckpt.get("target_jobs", 0):
+                                    meta["status"] = "running"
+                        except Exception:
+                            pass
+
+                    # Try jobs.json as fallback
+                    if not meta:
+                        if jobs_file.exists():
                             try:
-                                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                                jobs = json.loads(jobs_file.read_text(encoding="utf-8"))
+                                meta["total_jobs"] = len(jobs)
                             except Exception:
                                 pass
-                        if not meta:
-                            jobs_file = item / "jobs.json"
-                            total_jobs = 0
-                            if jobs_file.exists():
-                                try:
-                                    jobs = json.loads(jobs_file.read_text(encoding="utf-8"))
-                                    total_jobs = len(jobs)
-                                except Exception:
-                                    pass
-                            html_dir = item / "html"
-                            pages_crawled = len(list(html_dir.glob("*.html"))) if html_dir.exists() else 0
-                            meta = {
-                                "timestamp": item.name.replace("run_", ""),
-                                "crawled_at": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
-                                "total_jobs": total_jobs,
-                                "pages_crawled": pages_crawled,
-                                "proxies_used": [],
-                                "target_url": "",
-                                "site_name": "unknown",
-                            }
-                        meta["id"] = item.name
-                        sessions.append(meta)
+
+                    if not meta:
+                        html_dir = item / "html"
+                        pages_crawled = len(list(html_dir.glob("*.html"))) if html_dir.exists() else 0
+                        meta = {
+                            "timestamp": item.name.replace("run_", ""),
+                            "crawled_at": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                            "total_jobs": 0,
+                            "pages_crawled": pages_crawled,
+                            "proxies_used": [],
+                            "target_url": "",
+                            "site_name": "unknown",
+                            "status": "completed",
+                        }
+
+                    meta["id"] = sid
+                    sessions.append(meta)
             sessions.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
             self.wfile.write(json.dumps(sessions, ensure_ascii=False, indent=2).encode("utf-8"))
             return
@@ -706,11 +795,49 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             session_id = path[len("/api/jobs/"):]
             session_dir = OUTPUT_DIR / session_id
             jobs_file = session_dir / "jobs.json"
+            ckpt_file = session_dir / "checkpoint.json"
+
             if jobs_file.exists():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(jobs_file.read_bytes())
+            elif ckpt_file.exists():
+                # Live crawl — extract jobs from checkpoint
+                try:
+                    ckpt = json.loads(ckpt_file.read_text(encoding="utf-8"))
+                    jobs = []
+                    for pg in ckpt.get("pages", []):
+                        if not pg:
+                            continue
+                        for job in pg.get("jobs", []):
+                            if not job.get("detail_fetched"):
+                                continue
+                            jobs.append({
+                                "job_id": job.get("job_id"),
+                                "title": job.get("title"),
+                                "company": job.get("company"),
+                                "salary": job.get("salary"),
+                                "location": job.get("location"),
+                                "jobType": job.get("jobType"),
+                                "detail_url": job.get("detail_url"),
+                                "detail_html_path": job.get("detail_html"),
+                                "link": job.get("detail_url"),
+                                "page": pg.get("page_num"),
+                                "page_url": pg.get("url"),
+                                "page_html_path": pg.get("list_html_path"),
+                                "crawled_at": job.get("crawled_at"),
+                                "proxy_used": pg.get("proxy_used"),
+                            })
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(jobs, ensure_ascii=False, indent=2).encode("utf-8"))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             else:
                 self.send_response(404)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
