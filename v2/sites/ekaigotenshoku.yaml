@@ -1,0 +1,62 @@
+# Site mapping for ekaigotenshoku.com
+# ──────────────────────────────────────────────────────────────────────────
+# This YAML file defines how the crawler interacts with this specific site.
+# To add a new site, copy this file and modify the values accordingly.
+
+name: ekaigotenshoku
+display_name: "Ekaigo Tenshoku (えかいご転職)"
+
+url:
+  listing_url: "https://www.ekaigotenshoku.com/kyujin/list?z01=1"
+  listing_url_template: "https://www.ekaigotenshoku.com/kyujin?page={page}&z01=1"
+  detail_url_pattern: "/kyujin/detail\\?id=(\\d+)"
+
+# Keywords that confirm the page loaded correctly (Japanese content present)
+success_keywords:
+  - "求人"
+  - "介護"
+  - "給与"
+  - "勤務地"
+  - "施設"
+  - "募集"
+  - "正社員"
+
+# Field mapping for structured JSON output
+# Each key becomes a field in the output-final-json files.
+# Value can be:
+#   - A string: maps directly from the extraction result field
+#   - A dict with "source" and optional "transform":
+#     - source: field name from extraction
+#     - transform: "strip", "split_newline", or null
+fields:
+  job_id:
+    source: job_id
+  title:
+    source: title
+    transform: strip
+  company:
+    source: company
+    transform: strip
+  salary:
+    source: salary
+    transform: strip
+  location:
+    source: location
+    transform: strip
+  employment_type:
+    source: jobType
+    transform: strip
+  detail_url:
+    source: detail_url
+
+# JS extraction and pagination code are loaded from the built-in mapping
+# by default. To override, uncomment and provide your own code:
+#
+# js_extraction_file: ekaigotenshoku_extract.js
+# js_pagination_file: ekaigotenshoku_paginate.js
+#
+# Or inline:
+# js_extraction_code: |
+#   () => { ... }
+# js_pagination_code: |
+#   () => { ... }
