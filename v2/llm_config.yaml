@@ -1,0 +1,59 @@
+# LLM API Integration Configuration
+# ================================================================
+# This is a boilerplate / skeleton file for integrating any LLM API
+# (Claude, Gemini, Groq, OpenAI, local Ollama, etc.).
+#
+# To enable: set enabled=true, fill in your api_key, base_url, model,
+# and customize the prompt template below.
+#
+# Since the entire source runs locally, your API key stays on your machine.
+# IMPORTANT: Do NOT commit this file to public repositories.
+# ================================================================
+
+# Set to true to enable the LLM enhancement layer
+enabled: false
+
+# Your API key (e.g., sk-... for OpenAI, gsk_... for Groq, etc.)
+api_key: "YOUR_API_KEY_HERE"
+
+# Base URL for the LLM API
+# Examples:
+#   OpenAI:       https://api.openai.com/v1
+#   Groq:         https://api.groq.com/openai/v1
+#   Gemini:       https://generativelanguage.googleapis.com/v1beta
+#   Local Ollama: http://localhost:11434/v1
+base_url: "https://api.openai.com/v1"
+
+# Model name to use
+# Examples: gpt-4o-mini, llama-3.1-70b-versatile, gemini-1.5-flash, claude-3-haiku
+model: "gpt-4o-mini"
+
+# Maximum tokens per LLM call
+max_tokens: 2048
+
+# Temperature (0.0 = deterministic, 1.0 = creative)
+temperature: 0.2
+
+# Prompt template. The following placeholders are automatically replaced:
+#   {html}       - truncated raw HTML content of the crawled detail page
+#   {job_title}  - title of the job extracted by the crawler
+#   {job_url}    - URL of the detail page
+#   {fields}     - JSON string of fields already extracted by the crawler
+#
+# The LLM should return ONLY a valid JSON object (no markdown fences).
+# That JSON will be merged into the final output under the key "llm_enhanced".
+prompt: |
+  You are a structured data extraction assistant.
+  Given the raw HTML below, extract additional structured information
+  and return it as a single JSON object. Do not wrap the JSON in markdown.
+
+  Job Title: {job_title}
+  Job URL: {job_url}
+  Already Extracted Fields: {fields}
+
+  Raw HTML (truncated):
+  {html}
+
+  Return JSON with any extra fields you can infer (e.g., requirements,
+  benefits, contact_info, industry, company_size, remote_policy, etc.).
+  If you cannot infer a field, use null. Keep keys in snake_case.

@@ -47,7 +47,7 @@ def save_results(items: list[dict], run_dir: Path, state: dict,
     csv_path = run_dir / "jobs.csv"
     fields = ["job_id", "title", "company", "salary", "location", "jobType",
               "detail_url", "detail_html_path", "link", "page", "crawled_at",
-              "proxy_used", "page_url", "page_html_path"]
+              "proxy_used", "page_url", "page_html_path", "llm_enhanced"]
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -91,6 +91,9 @@ def save_final_json(run_dir: Path, items: list[dict],
     for item in items:
         job_id = item.get("job_id", "unknown")
         mapped = {}
+        # Preserve LLM-enhanced data if present
+        if item.get("llm_enhanced"):
+            mapped["llm_enhanced"] = item["llm_enhanced"]
         for field_name, field_def in mapping.fields.items():
             # field_def can be a source field name or a dict with transform
             if isinstance(field_def, str):

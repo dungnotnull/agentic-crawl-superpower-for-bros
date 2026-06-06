@@ -156,18 +156,28 @@ def _save_block_file(run_dir: Path, state: dict) -> None:
 
 # ── Browser helpers ───────────────────────────────────────────────────────
 
-async def verify_japan_ip(page) -> tuple[bool, str]:
+async def verify_country_ip(page, country_code: str = "JP") -> tuple[bool, str]:
+    """Verify that the proxy IP matches the target country."""
+    if country_code.upper() == "DIRECT" or not country_code:
+        return True, "direct"
     try:
         await page.goto("https://ipinfo.io/json",
                         wait_until="domcontentloaded", timeout=12000)
         content = await page.content()
-        is_jp = '"JP"' in content or '"country":"JP"' in content
+        cc = country_code.upper()
+        if cc == "EU":
+            eu_codes = {"AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR",
+                        "DE","GR","HU","IE","IT","LV","LT","LU","MT","NL",
+                        "PL","PT","RO","SK","SI","ES","SE","GB","NO","CH",
+                        "UA","IS","LI"}
+            m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', content)
+            is_match = m and m.group(1) in eu_codes
+        else:
+            is_match = f'"{cc}"' in content or f'"country":"{cc}"' in content
         m = re.search(r'"ip"\s*:\s*"([^"]+)"', content)
-        return is_jp, (m.group(1) if m else "unknown")
+        return is_match, (m.group(1) if m else "unknown")
     except Exception:
         return False, "unknown"
-
-
 async def extract_jobs_with_mapping(page, page_num: int, proxy: str,
                                     mapping: SiteMapping) -> list[dict]:
     """Extract job cards using the site mapping's JS extraction code."""
@@ -338,12 +348,18 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
         )
         page = await context.new_page()
 
-        _log("VERIFY", "Checking if proxy IP is Japanese...")
-        is_jp, ip_addr = await verify_japan_ip(page)
-        if not is_jp:
-            _log("SKIP", f"IP is not JP ({ip_addr}) — skipping this proxy")
+        _log("VERIFY", f"Checking if proxy IP is {config.proxy_country.upper() if config.use_proxy else 'DIRECT'}...")
+        is_target_country, ip_addr = await verify_country_ip(page, config.proxy_country.upper() if config.use_proxy else "DIRECT")
+        if not is_target_country:
+            _log("SKIP", f"IP is not {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} ({ip_addr}) — skipping this proxy")
             return [], 0
-        _log("OK", f"JP IP confirmed: {ip_addr}")
+        _log("OK", f"{config.proxy_country.upper() if config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
+
+        # Authentication layer (if required)
+        auth_config = load_auth_config()
+        if auth_config and config.auth_required:
+            _log("AUTH", "Target site requires authentication - logging in...")
+            await authenticate(page, auth_config)
 
         # Warm up with Google Japan
         _log("WARMUP", "Navigating to google.co.jp...")
@@ -414,6 +430,9 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                             page = await context.new_page()
                             await page.goto(listing_url,
                                             wait_until="domcontentloaded", timeout=30000)
+                            if auth_config and config.auth_required and auth_config.get("login_url") in page.url:
+                                _log("AUTH", "Session recovery: re-authenticating...")
+                                await authenticate(page, auth_config)
                             await asyncio.sleep(random.uniform(2.0, 4.0))
                         except Exception:
                             pass
@@ -452,6 +471,10 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
 
             _log("PAGE", f"Loading listing page {page_num}: {current_url[:70]}...")
             await page.goto(current_url, wait_until="domcontentloaded", timeout=45000)
+            if auth_config and config.auth_required and auth_config.get("login_url") and auth_config.get("login_url") in page.url:
+                _log("AUTH", "Redirected to login page - re-authenticating...")
+                await authenticate(page, auth_config)
+                await page.goto(current_url, wait_until="domcontentloaded", timeout=45000)
             await asyncio.sleep(random.uniform(config.delay_min, config.delay_max) *
                                 rate_limit["current_multiplier"])
             pages_visited += 1
@@ -993,12 +1016,12 @@ class CrawlEngine:
                     page = await context.new_page()
 
                     # Verify JP IP
-                    is_jp, ip_addr = await verify_japan_ip(page)
-                    if not is_jp:
-                        _log("SKIP", f"Retry: proxy IP is not JP ({ip_addr})")
+                    is_target_country, ip_addr = await verify_country_ip(page, config.proxy_country.upper() if config.use_proxy else "DIRECT")
+                    if not is_target_country:
+                        _log("SKIP", f"Retry: proxy IP is not {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} ({ip_addr})")
                         continue
 
-                    _log("OK", f"Retry: JP IP confirmed: {ip_addr}")
+                    _log("OK", f"Retry: {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
 
                     for job in jobs_to_try[:]:
                         jid = job.get("job_id")

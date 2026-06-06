@@ -1,0 +1,34 @@
+# Authentication Configuration Template
+# ================================================================
+# Fill in the fields below if the target website requires login.
+# The crawler will use these credentials to automate the login
+# process and maintain the session throughout the crawl.
+#
+# IMPORTANT: Keep this file secure. Do NOT commit it to public repos.
+# ================================================================
+
+# Set to true to enable the authentication layer
+enabled: false
+
+# Target website login page URL
+login_url: "https://example.com/login"
+
+# Your login credentials
+username: "your_username_or_email"
+password: "your_password"
+
+# CSS selectors for the login form fields (use browser DevTools to find these)
+username_selector: "input[name='email'], input[name='username'], #email, #username"
+password_selector: "input[name='password'], input[type='password'], #password"
+submit_selector: "button[type='submit'], input[type='submit'], .login-btn, #login-button"
+
+# How to detect successful login (optional)
+# success_url_fragment: the URL should contain this after login
+success_url_fragment: "/dashboard"
+
+# Selector for an element that only appears when logged in (e.g., logout link)
+# Used to verify session is still active. Leave empty to skip.
+logged_in_indicator: ".logout-link, .user-profile, [href*='logout']"
+
+# Delay (seconds) to wait after clicking submit for the page to load
+post_submit_wait: 5.0

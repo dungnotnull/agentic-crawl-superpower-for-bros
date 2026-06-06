@@ -1,6 +1,6 @@
 # First Sight by Hand
 
-Welcome! This guide walks you through crawling Japanese job listings â€” no coding required.
+Welcome! This guide walks you through crawling job listings — no coding required.
 
 ---
 
@@ -15,7 +15,7 @@ Welcome! This guide walks you through crawling Japanese job listings â€” no codi
 
 ---
 
-## Step 1 â€” Install Python
+## Step 1 — Install Python
 
 Go to [python.org](https://python.org), download the latest version, and run the installer.
 
@@ -31,7 +31,7 @@ You should see something like `Python 3.11.x`.
 
 ---
 
-## Step 2 â€” Get the project
+## Step 2 — Get the project
 
 You already have the project folder. Open a terminal (Command Prompt, PowerShell, or Terminal) and navigate into it:
 
@@ -41,7 +41,7 @@ cd path\to\crawl-superpower-for-bros\v2
 
 ---
 
-## Step 3 â€” Install dependencies
+## Step 3 — Install dependencies
 
 Run this one command:
 
@@ -59,15 +59,15 @@ This downloads Chrome's automation driver. It only needs to be done once.
 
 ---
 
-## Step 4 â€” Set up proxies (first time only)
+## Step 4 — Set up proxies (first time only)
 
-**What is this?** The tool needs Japanese IP addresses to access Japanese job sites. This step finds free public proxies located in Japan.
+**What is this?** The tool can use IP addresses from different countries to access geo-restricted websites. This step finds free public proxies located in your target country.
 
 ```bash
-python proxy/fetcher.py
+python proxy/fetcher.py --country japan
 ```
 
-Wait about 2-5 minutes. You'll see it contacting different proxy providers, verifying each one. A successful run looks like:
+Wait about 2-5 minutes. You will see it contacting different proxy providers, verifying each one. A successful run looks like:
 
 ```
 ========================================================================
@@ -75,52 +75,100 @@ Wait about 2-5 minutes. You'll see it contacting different proxy providers, veri
 ========================================================================
 ```
 
-If you want proxies for a different site later, run:
+**Supported countries:**
+- `vietnam`
+- `japan`
+- `china`
+- `south korea`
+- `singapore`
+- `russia`
+- `europe`
+- `india`
+- `usa`
 
-```bash
-python proxy/fetcher.py --site YOUR_SITE_NAME
-```
+If your target website does **not** block your IP, you can skip proxies entirely by selecting **"No need proxy"** in the next step.
 
 ---
 
-## Step 5 â€” Start crawling
+## Step 5 — Start crawling
 
-### Basic crawl (target a number of jobs)
-
-```bash
-python main.py --target-jobs 100
-```
-
-This crawls until 100 unique jobs are collected. Replace `100` with whatever number you need.
-
-### Crawl without limits
+Run the main script:
 
 ```bash
 python main.py
 ```
 
-This crawls until all available pages are exhausted.
+The terminal will ask you three simple questions:
 
-### Other useful options
+### Question 1: Proxy country
 
-| Command | What it does |
-|---------|-------------|
-| `--target-jobs 240` | Stop after 240 jobs |
-| `--max-pages 10` | Only crawl 10 listing pages per proxy |
-| `--bayesian` | Use smart proxy scoring with Bayesian prediction |
-| `--clean` | Delete all previous results and start fresh |
-| `--no-headless` | Show the browser window (for debugging) |
+```
+  [PROXY] Select proxy country:
+    (1) Vietnam
+    (2) Japan
+    (3) China
+    (4) South Korea
+    (5) Singapore
+    (6) Russia
+    (7) Europe
+    (8) India
+    (9) USA
+    (0) No need proxy
+
+  Enter choice [1-9, 0]:
+```
+
+- Pick the country where your target website is based, or where you want your IP to appear from.
+- Pick `0` if the website does not block your real IP address.
+
+### Question 2: Authentication
+
+```
+  [AUTH] Does this website require authentication? [Y/N]:
+```
+
+- Answer `Y` only if the site requires a login (like Shopee or LinkedIn).
+- If you answer `Y`, the tool will read your login details from `auth_config.yaml` and log in automatically.
+- For most public job sites, answer `N`.
+
+### Question 3: Resume (only if you have a previous run)
+
+```
+  [START] (C)lean start / (R)esume / (Q)uit? [C/R/Q]:
+```
+
+- **C** = delete everything and start fresh
+- **R** = continue where you left off
+- **Q** = exit
 
 ---
 
-## Step 6 â€” Watch progress
+### After the questions
 
-Once the crawl starts, the terminal shows real-time progress:
+The tool starts crawling automatically. You will see real-time progress:
 
 ```
-  00:15 [FOUND] Job #1/20: ID=299554 "ä»‹è­·è·å“¡ï¼ˆæ­£ç¤¾å“¡ï¼‰"
-  00:19 [SAVED] Job 299554 "ä»‹è­·è·å“¡ï¼ˆæ­£ç¤¾å“¡ï¼‰" -> 1/100 jobs (1%)
+  00:15 [FOUND] Job #1/20: ID=299554 "????(???)"
+  00:19 [SAVED] Job 299554 "????(???)" -> 1/100 jobs (1%)
 ```
+
+### Useful command-line options
+
+| Command | What it does |
+|---------|-------------|
+| `python main.py --target-jobs 240` | Stop after 240 jobs |
+| `python main.py --max-pages 10` | Only crawl 10 listing pages per proxy |
+| `python main.py --clean` | Delete all previous results and start fresh |
+| `python main.py --no-headless` | Show the browser window (for debugging) |
+| `python main.py --bayesian` | Use smart proxy scoring |
+
+---
+
+## Step 6 — Watch progress
+
+### Terminal
+
+The terminal shows real-time logs with job IDs, progress percentages, and elapsed time.
 
 ### Live Dashboard
 
@@ -130,11 +178,11 @@ While the crawl runs, open your browser and go to:
 http://localhost:3001
 ```
 
-You'll see a dashboard showing crawled jobs, HTML previews, and progress stats. The dashboard starts automatically â€” no extra commands needed.
+You will see a dashboard showing crawled jobs, HTML previews, and progress stats. The dashboard starts automatically — no extra commands needed.
 
 ---
 
-## Step 7 â€” Find your results
+## Step 7 — Find your results
 
 After the crawl finishes, the results are saved in the `output/` folder:
 
@@ -156,6 +204,42 @@ Double-click `jobs.csv` or import it:
 3. Select `output/run_*/jobs.csv`
 4. Set encoding to **UTF-8**
 5. Click **Load**
+
+---
+
+## Optional: LLM Integration (Smart Data Enrichment)
+
+If you want the tool to automatically send each crawled page to an AI (like ChatGPT, Claude, or Gemini) and extract extra structured information:
+
+1. Open `llm_config.yaml`
+2. Change `enabled: false` to `enabled: true`
+3. Paste your API key into `api_key: "YOUR_API_KEY_HERE"`
+4. Set `base_url` and `model` to match your provider
+5. Customize the `prompt` if you want
+6. Run `python main.py` as normal
+
+The AI-extracted data will appear inside each job's JSON file under the key `llm_enhanced`.
+
+> **Your API key stays on your computer.** The tool runs entirely locally.
+
+---
+
+## Optional: Authentication (Protected Websites)
+
+If the website you want to crawl requires a login:
+
+1. Open `auth_config.yaml`
+2. Change `enabled: false` to `enabled: true`
+3. Fill in:
+   - `login_url` — the website's login page address
+   - `username` — your email or username
+   - `password` — your password
+   - `username_selector` — the CSS selector for the username field (use browser DevTools to find it)
+   - `password_selector` — the CSS selector for the password field
+   - `submit_selector` — the CSS selector for the login button
+4. Run `python main.py` and answer **Y** when asked about authentication
+
+The tool will log in automatically, and if it gets logged out during the crawl, it will log back in and keep going.
 
 ---
 
@@ -181,12 +265,13 @@ Press **R** to continue where you left off. All progress is auto-saved after eve
 
 | Problem | Solution |
 |---------|----------|
-| **"No proxies available"** | Re-run `python proxy/fetcher.py` |
-| **"No JP content at page"** | The proxies are blocked â€” the tool automatically switches to the next proxy. Just wait. |
-| **Crawl seems stuck** | It's not. When proxies run out, the tool waits 60 seconds and tries again. It will never give up. |
+| **"No proxies available"** | Re-run `python proxy/fetcher.py --country {your_country}` |
+| **"No content at page"** | The proxies are blocked — the tool automatically switches to the next proxy. Just wait. |
+| **Crawl seems stuck** | It is not. When proxies run out, the tool waits 60 seconds and tries again. It will never give up. |
 | **Japanese text shows as ???** | Use **Windows Terminal** instead of Command Prompt, or type `chcp 65001` before running. |
 | **Dashboard shows nothing** | Data appears as jobs are crawled. Wait for the first few jobs to complete. |
 | **Blocked jobs** | Some jobs get blocked by the website. The tool retries 20 times, then logs them in `blocked_jobs.json`. This is normal. |
+| **"Does this website require authentication?"** | Answer **N** for public sites. Answer **Y** only for sites with login walls. |
 
 ---
 
@@ -196,13 +281,13 @@ Press **R** to continue where you left off. All progress is auto-saved after eve
 # One-time setup
 pip install -r requirements.txt
 python -m cloakbrowser install
-python proxy/fetcher.py
+python proxy/fetcher.py --country japan
 
-# Start crawling (default)
+# Start crawling (interactive prompts)
+python main.py
+
+# Start crawling with options
 python main.py --target-jobs 240
-
-# Start crawling with Bayesian scoring
-python main.py --bayesian --target-jobs 240
 
 # View live dashboard
 # Open: http://localhost:3001
@@ -218,15 +303,16 @@ python main.py --target-jobs 240
 
 The only things you need to decide are:
 
+- **Which country proxy?** (or `0` for no proxy)
+- **Does the site need login?** (Y/N)
 - **How many jobs do you want?** (`--target-jobs N`)
-- **Use Bayesian scoring?** (`--bayesian`) â€” optional, for smarter proxy selection on long runs
 
-Everything else has sensible defaults. You don't need to configure anything unless you want to.
+Everything else has sensible defaults. You do not need to configure anything unless you want to.
 
 ---
 
 ## Need help?
 
-- `python main.py --help` â€” shows all available options
-- `python proxy/fetcher.py --help` â€” shows proxy fetching options
+- `python main.py --help` — shows all available options
+- `python proxy/fetcher.py --help` — shows proxy fetching options
 - The dashboard at `http://localhost:3001` shows real-time crawl status

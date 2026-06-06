@@ -3,6 +3,10 @@ Proxy Manager - loads, validates, and refreshes proxy lists.
 
 If no proxies are available, the manager signals this to the crawl engine,
 which will WAIT and keep searching rather than terminating.
+
+Now supports:
+  - Country-specific proxy caches (japan_working_proxies.json, usa_working_proxies.json, etc.)
+  - No-proxy mode (returns ["direct://"] so the engine runs without proxies)
 """
 
 from __future__ import annotations
@@ -53,10 +57,13 @@ class ProxyManager:
     def _refetch(self) -> None:
         """Run the proxy fetch script to refresh the cache."""
         site_arg = ["--site", self.site_name] if self.site_name else []
-        cmd = [sys.executable, self.config.proxy_fetch_script] + site_arg
+        country_arg = ["--country", self.config.proxy_country] if self.config.proxy_country else []
+        cmd = [sys.executable, self.config.proxy_fetch_script] + site_arg + country_arg
         print(f"  [PROXY] Fetching fresh proxies from multiple providers...")
         if self.site_name:
             print(f"  [PROXY] Site: {self.site_name}")
+        if self.config.proxy_country:
+            print(f"  [PROXY] Country: {self.config.proxy_country}")
         print(f"  [PROXY] Running {' '.join(cmd)}")
         try:
             result = subprocess.run(cmd, check=True)
@@ -67,8 +74,15 @@ class ProxyManager:
     def load_proxies(self, allow_refetch: bool = True) -> list[str]:
         """Load proxies sorted by real_score (best first).
 
+        Returns ["direct://"] when use_proxy is False so the crawl engine
+        runs a single local session.
         Returns empty list if no proxies available (engine will wait).
         """
+        # No-proxy mode: bypass proxy layer entirely
+        if not self.config.use_proxy:
+            print("  [PROXY] Proxy layer disabled (No need proxy)")
+            return ["direct://"]
+
         working_file = self.config.proxy_working_file
         if working_file.exists():
             try:
@@ -81,10 +95,10 @@ class ProxyManager:
                 proxies = [p["proxy"] for p in raw if p.get("proxy")]
                 if proxies:
                     top_score = raw[0].get("real_score", "?")
-                    jp_count = sum(1 for p in raw if p.get("is_jp"))
+                    country = data.get("country", self.config.proxy_country.upper())
                     site_ok = sum(1 for p in raw if p.get("target_ok"))
                     print(f"  [PROXY] Loaded {len(proxies)} proxies "
-                          f"(JP: {jp_count}, site-OK: {site_ok}, "
+                          f"({country}: {len(raw)}, site-OK: {site_ok}, "
                           f"top score: {top_score})")
 
                     # Seed tracker with base scores from fetcher

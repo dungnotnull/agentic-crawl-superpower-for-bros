@@ -58,6 +58,39 @@ def _safe_print(msg: str) -> None:
         sys.stdout.flush()
 
 
+
+
+def _print_logo() -> None:
+    """Display the project ASCII logo on startup."""
+    logo_lines = [
+        "    ========================================================================",
+        "    |                                                                      |",
+        "    |    ______                      __        ____                        |",
+        "    |   / ____/________  ____ _ ___/ /_  ___/ / /__  ____  _____         |",
+        "    |  / /    / ___/ _ \/ __ `/ /__/ __ \/ _  / / _ \/ __ \/ ___/         |",
+        "    | / /___  / /  /  __/ /_/ / /__/ / / / /_/ / /  __/ / / /__ \          |",
+        "    | \____/ /_/   \___/\__,_/_/\__/_/ /_/\__,_/_/\___/_/ /_/___/          |",
+        "    |         _____ ________________  __  ______  ____  _____            |",
+        "    |        / ___// ____/ ____/ __ \/ / / / __ \/ __ \/ ___/             |",
+        "    |        \__ \/ /   / /_  / /_/ / /_/ / /_/ / / / /__ \                |",
+        "    |       ___/ / /___/ __/ / _, _/ __  / ____/ /_/ /__/ /               |",
+        "    |      /____/\____/_/   /_/ |_/_/ /_/_/    \____/____/                |",
+        "    |         ____  ____  _____ _____ _____ _____                          |",
+        "    |        / __ \/ __ \/ ___// ___// ___// ___/                          |",
+        "    |       / /_/ / / / /__ \ \__ \ \__ \ \__ \                            |",
+        "    |      / _, _/ /_/ /__/ /__/ / __/ / __/ /__/                         |",
+        "    |     /_/ |_|\____/____/____/____/____/____/                           |",
+        "    |                                                                      |",
+        "    |         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+              |",
+        "    |         |  NEVER-STOP WEB CRAWLER  |  v2.1  |  MIT  |              |",
+        "    |         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+              |",
+        "    |                                                                      |",
+        "    ========================================================================",
+    ]
+    for raw_line in logo_lines:
+        _safe_print(raw_line)
+
+
 def _subprocess_env() -> dict[str, str]:
     """Build environment dict for subprocess calls (UTF-8 safe)."""
     env = dict(os.environ)
@@ -124,6 +157,45 @@ def _print_help() -> None:
 
 # ── Clean Start / Resume ────────────────────────────────────────────────
 
+
+
+def prompt_proxy_country() -> str:
+    """Ask user which country proxy to use."""
+    options = [
+        ("1", "vietnam", "Vietnam"),
+        ("2", "japan", "Japan"),
+        ("3", "china", "China"),
+        ("4", "south korea", "South Korea"),
+        ("5", "singapore", "Singapore"),
+        ("6", "russia", "Russia"),
+        ("7", "europe", "Europe"),
+        ("8", "india", "India"),
+        ("9", "usa", "USA"),
+        ("0", "none", "No need proxy"),
+    ]
+    _safe_print("\n  [PROXY] Select proxy country:")
+    for num, key, label in options:
+        _safe_print(f"    ({num}) {label}")
+    try:
+        choice = input("  Enter choice [1-9, 0]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return "none"
+    for num, key, label in options:
+        if choice == num or choice.lower() == key or choice.lower() == label.lower():
+            return key
+    _safe_print("  [WARN] Invalid choice - defaulting to 'none' (no proxy)")
+    return "none"
+
+
+def prompt_auth_required() -> bool:
+    """Ask user if the target website requires authentication."""
+    try:
+        choice = input("\n  [AUTH] Does this website require authentication? [Y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return choice in ("y", "yes", "true", "1")
+
+
 def prompt_clean_start() -> bool:
     """Ask the user whether to start fresh or resume."""
     try:
@@ -172,6 +244,18 @@ async def main() -> None:
     _safe_print(f"  Never-Stop Orchestrator - {datetime.now():%Y-%m-%d %H:%M:%S}")
     _safe_print(f"{sep}")
 
+    # --- Proxy country selection ---
+    config.proxy_country = prompt_proxy_country()
+    config.use_proxy = (config.proxy_country != "none")
+    if config.use_proxy:
+        config.proxy_working_file = config._country_to_file(config.proxy_country)
+        _safe_print(f"  [INIT] Proxy country: {config.proxy_country}")
+    else:
+        _safe_print(f"  [INIT] Proxy layer disabled (No need proxy)")
+    # --- Authentication prompt ---
+    config.auth_required = prompt_auth_required()
+    _safe_print(f"  [INIT] Authentication required: {config.auth_required}")
+
     # Load site mapping
     _safe_print(f"  [INIT] Loading site mapping: {args['site']}")
     mapping = load_site_mapping(args["site"])
@@ -179,6 +263,8 @@ async def main() -> None:
 
     # Check proxy availability
     _safe_print(f"  [INIT] Checking proxy cache...")
+    # Initialize proxy tracker early (needed by ProxyManager)
+    tracker = ProxyTracker(config)
     pm = ProxyManager(config, site_name=args['site'], tracker=tracker)
     proxies = pm.load_proxies()
     if proxies:
@@ -217,7 +303,6 @@ async def main() -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize proxy tracker
-    tracker = ProxyTracker(config)
     tracker_path = run_dir / "proxy_tracker.json"
     if tracker_path.exists():
         tracker.load(tracker_path)
@@ -237,6 +322,8 @@ async def main() -> None:
     _safe_print(f"  Block:      {config.block_threshold} attempts before permanent block")
     _safe_print(f"  Headless:   {config.headless}")
     _safe_print(f"  Output:     {run_dir}")
+    _safe_print(f"{sep}")
+    _print_logo()
     _safe_print(f"{sep}")
     _safe_print(f"\n  [START] The crawl loop will NOT stop until target is met.")
     _safe_print(f"  [START] If no proxies are available, it will wait and keep searching.")

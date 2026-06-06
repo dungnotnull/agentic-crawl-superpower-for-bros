@@ -1,10 +1,13 @@
 """
-Proxy Fetcher - Multi-provider edition (v4)
+Proxy Fetcher - Multi-provider, Multi-country edition (v5)
 ===========================================================================
-Pipeline: Fetch from multiple providers -> Dedup -> Verify JP IP ->
+Pipeline: Fetch from multiple providers -> Dedup -> Verify Country IP ->
           Verify target -> Score -> Save cache (with TTL)
 
-Providers: 14 free proxy sources aggregated into one pool.
+Providers: 14+ free proxy sources aggregated into one pool.
+Now supports country-specific proxy scraping for:
+  Vietnam, Japan, China, South Korea, Singapore, Russia, Europe, India, USA.
+
 Requirements: pip install requests PySocks
 """
 
@@ -27,7 +30,6 @@ def _print(msg: str = "", end: str = "\n", flush: bool = False) -> None:
         sys.stdout.flush()
 
 def _sep(char: str = "=", width: int = 72) -> str:
-    """Build a separator line of ASCII-safe characters."""
     return char * width
 
 def _banner(text: str) -> None:
@@ -46,28 +48,51 @@ def _action(tag: str, msg: str) -> None:
     _print(f"   [{tag}] {msg}")
 
 
+# --- Country Configuration -------------------------------------------------
+
+COUNTRY_CODES = {
+    "vietnam": "VN",
+    "japan": "JP",
+    "china": "CN",
+    "south korea": "KR",
+    "singapore": "SG",
+    "russia": "RU",
+    "europe": "EU",
+    "india": "IN",
+    "usa": "US",
+}
+
+# European country codes used for IP verification when region="europe"
+EU_COUNTRY_CODES = {
+    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+    "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
+    "PL", "PT", "RO", "SK", "SI", "ES", "SE", "GB", "NO", "CH",
+    "UA", "IS", "LI",
+}
+
 # --- Site-aware target detection -----------------------------------------
-# These defaults are used when no --site is specified.
-# When --site NAME is passed, the site mapping's url.listing_url and
-# success_keywords are used instead.
 
 DEFAULT_TARGET_URL = "https://www.ekaigotenshoku.com/kyujin/list?z01=1"
-DEFAULT_SUCCESS_KW = ["求人", "介護", "給与", "勤務地", "施設", "募集", "正社員"]
+DEFAULT_SUCCESS_KW = ["??", "??", "??", "???", "??", "??", "???"]
 
-def _load_target_from_args() -> tuple[str, list[str], str]:
-    """Parse CLI for --site or --url/--keywords overrides.
-    Returns (target_url, success_keywords, site_name_or_url).
+def _load_target_from_args() -> tuple[str, list[str], str, str]:
+    """Parse CLI for --site, --country, or --url/--keywords overrides.
+    Returns (target_url, success_keywords, site_name_or_url, country_code).
     """
-    import sys
     args = sys.argv[1:]
     site_name = None
     target_url = DEFAULT_TARGET_URL
     success_kw = DEFAULT_SUCCESS_KW
+    country = "JP"
 
     i = 0
     while i < len(args):
         if args[i] == "--site" and i + 1 < len(args):
             site_name = args[i + 1]
+            i += 2
+        elif args[i] == "--country" and i + 1 < len(args):
+            country_input = args[i + 1].strip().lower()
+            country = COUNTRY_CODES.get(country_input, country_input.upper())
             i += 2
         elif args[i] == "--url" and i + 1 < len(args):
             target_url = args[i + 1]
@@ -76,19 +101,18 @@ def _load_target_from_args() -> tuple[str, list[str], str]:
             success_kw = [kw.strip() for kw in args[i + 1].split(",") if kw.strip()]
             i += 2
         elif args[i] in ("--help", "-h"):
-            _print("Usage: python proxy/fetcher.py [--site NAME] [--url URL] [--keywords kw1,kw2,...]")
-            _print("  --site NAME    Load URL and keywords from site mapping (e.g. ekaigotenshoku)")
-            _print("  --url URL      Override the target URL to verify against")
-            _print("  --keywords ...  Comma-separated keywords to verify on target page")
-            _print("  --help, -h     Show this help")
+            _print("Usage: python proxy/fetcher.py [--site NAME] [--country COUNTRY] [--url URL] [--keywords kw1,kw2,...]")
+            _print("  --site NAME       Load URL and keywords from site mapping (e.g. ekaigotenshoku)")
+            _print("  --country NAME    Target country: vietnam, japan, china, south korea, singapore, russia, europe, india, usa")
+            _print("  --url URL         Override the target URL to verify against")
+            _print("  --keywords ...    Comma-separated keywords to verify on target page")
+            _print("  --help, -h        Show this help")
             import sys as _sys; _sys.exit(0)
         else:
             i += 1
 
-    # If a site was specified, load its mapping
     if site_name:
         try:
-            # Try relative import first (running from v2/), then fallback
             try:
                 from site_mappings import load_site_mapping
             except ImportError:
@@ -102,7 +126,8 @@ def _load_target_from_args() -> tuple[str, list[str], str]:
             _print(f"[WARN] Failed to load site '{site_name}': {e}")
             _print(f"[WARN] Falling back to default target")
 
-    return target_url, success_kw, site_name or target_url
+    return target_url, success_kw, site_name or target_url, country
+
 
 # --- Configuration ---
 WORKING_FILE   = Path("japan_working_proxies.json")
@@ -117,38 +142,61 @@ _ANON_RANK  = {"elite": 0, "anonymous": 1, "transparent": 2, "unknown": 3}
 _PROTO_RANK = {"socks5": 0, "socks4": 1, "https": 2, "http": 3}
 
 
-# --- Provider Definitions ------------------------------------------------
+# --- Provider Definitions (country-aware) -------------------------------
 
-PROVIDERS = [
-    {"name": "Proxifly JP",        "format": "proxifly",   "need_jp_filter": False,
-     "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/JP/data.json"},
-    {"name": "Proxifly SOCKS5",    "format": "proxifly",   "need_jp_filter": True,
-     "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.json"},
-    {"name": "Proxifly SOCKS4",    "format": "proxifly",   "need_jp_filter": True,
-     "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks4/data.json"},
-    {"name": "Proxifly Global",    "format": "proxifly",   "need_jp_filter": True,
-     "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"},
-    {"name": "ProxyScrape SOCKS5", "format": "plain_text", "need_jp_filter": False, "protocol": "socks5",
-     "url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=JP&ssl=all&anonymity=all"},
-    {"name": "ProxyScrape HTTP",   "format": "plain_text", "need_jp_filter": False, "protocol": "http",
-     "url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=JP&ssl=all&anonymity=all"},
-    {"name": "ProxyScrape SOCKS4", "format": "plain_text", "need_jp_filter": False, "protocol": "socks4",
-     "url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks4&timeout=10000&country=JP&ssl=all&anonymity=all"},
-    {"name": "GeoNode JP",         "format": "geonode",    "need_jp_filter": False,
-     "url": "https://proxylist.geonode.com/api/proxy-list?countries=JP&limit=500&page=1&sort_by=lastChecked&sort_type=desc"},
-    {"name": "FreeProxyList CDN",  "format": "proxifly",   "need_jp_filter": True,
-     "url": "https://cdn.jsdelivr.net/gh/themiracleworker/free-proxy-list@main/proxies.json"},
-    {"name": "Monosans SOCKS5",    "format": "plain_text", "need_jp_filter": True,  "protocol": "socks5",
-     "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt"},
-    {"name": "Monosans HTTP",      "format": "plain_text", "need_jp_filter": True,  "protocol": "http",
-     "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"},
-    {"name": "SpeedX SOCKS5",      "format": "plain_text", "need_jp_filter": True,  "protocol": "socks5",
-     "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"},
-    {"name": "SpeedX HTTP",        "format": "plain_text", "need_jp_filter": True,  "protocol": "http",
-     "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"},
-    {"name": "ClarkEtM Proxy",     "format": "plain_text", "need_jp_filter": True,  "protocol": "http",
-     "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt"},
-]
+def _provider_list(country_code: str) -> list[dict]:
+    """Return provider definitions parameterized by country code."""
+    cc = country_code.upper()
+    # For Europe we fall back to global/unfiltered lists and rely on verification
+    geo_cc = cc if cc != "EU" else "all"
+
+    providers = [
+        {"name": f"Proxifly {cc}",       "format": "proxifly",   "need_filter": False,
+         "url": f"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/countries/{cc}/data.json"},
+        {"name": "Proxifly SOCKS5",      "format": "proxifly",   "need_filter": True,
+         "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.json"},
+        {"name": "Proxifly SOCKS4",      "format": "proxifly",   "need_filter": True,
+         "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks4/data.json"},
+        {"name": "Proxifly Global",      "format": "proxifly",   "need_filter": True,
+         "url": "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"},
+        {"name": f"ProxyScrape SOCKS5 {geo_cc}", "format": "plain_text", "need_filter": False, "protocol": "socks5",
+         "url": f"https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country={geo_cc}&ssl=all&anonymity=all"},
+        {"name": f"ProxyScrape HTTP {geo_cc}",   "format": "plain_text", "need_filter": False, "protocol": "http",
+         "url": f"https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country={geo_cc}&ssl=all&anonymity=all"},
+        {"name": f"ProxyScrape SOCKS4 {geo_cc}","format": "plain_text", "need_filter": False, "protocol": "socks4",
+         "url": f"https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks4&timeout=10000&country={geo_cc}&ssl=all&anonymity=all"},
+    ]
+
+    # GeoNode supports multi-country codes; for Europe, use a broad EU list
+    if cc == "EU":
+        eu_codes = ",".join(sorted(EU_COUNTRY_CODES))[:300]  # keep URL reasonably short
+        providers.append({
+            "name": "GeoNode EU",
+            "format": "geonode", "need_filter": False,
+            "url": f"https://proxylist.geonode.com/api/proxy-list?countries={eu_codes}&limit=500&page=1&sort_by=lastChecked&sort_type=desc",
+        })
+    else:
+        providers.append({
+            "name": f"GeoNode {cc}",
+            "format": "geonode", "need_filter": False,
+            "url": f"https://proxylist.geonode.com/api/proxy-list?countries={cc}&limit=500&page=1&sort_by=lastChecked&sort_type=desc",
+        })
+
+    providers.extend([
+        {"name": "FreeProxyList CDN",  "format": "proxifly",   "need_filter": True,
+         "url": "https://cdn.jsdelivr.net/gh/themiracleworker/free-proxy-list@main/proxies.json"},
+        {"name": "Monosans SOCKS5",    "format": "plain_text", "need_filter": True,  "protocol": "socks5",
+         "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt"},
+        {"name": "Monosans HTTP",      "format": "plain_text", "need_filter": True,  "protocol": "http",
+         "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"},
+        {"name": "SpeedX SOCKS5",      "format": "plain_text", "need_filter": True,  "protocol": "socks5",
+         "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt"},
+        {"name": "SpeedX HTTP",        "format": "plain_text", "need_filter": True,  "protocol": "http",
+         "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"},
+        {"name": "ClarkEtM Proxy",     "format": "plain_text", "need_filter": True,  "protocol": "http",
+         "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt"},
+    ])
+    return providers
 
 
 # --- Parsers -------------------------------------------------------------
@@ -162,11 +210,18 @@ def _get_country(item: dict) -> str:
     return item.get("country", "")
 
 
-def _parse_proxifly(raw: list, need_jp_filter: bool) -> list[dict]:
+def _parse_proxifly(raw: list, need_filter: bool, target_country: str) -> list[dict]:
     results = []
+    tc = target_country.upper()
     for item in raw:
-        if need_jp_filter and _get_country(item) != "JP":
-            continue
+        if need_filter:
+            country = _get_country(item)
+            if tc == "EU":
+                if country not in EU_COUNTRY_CODES:
+                    continue
+            else:
+                if country != tc:
+                    continue
         ip = item.get("ip", "").strip()
         if not ip:
             continue
@@ -184,7 +239,7 @@ def _parse_proxifly(raw: list, need_jp_filter: bool) -> list[dict]:
     return results
 
 
-def _parse_plain_text(raw_text: str, protocol: str, need_jp_filter: bool) -> list[dict]:
+def _parse_plain_text(raw_text: str, protocol: str, need_filter: bool, target_country: str) -> list[dict]:
     results = []
     for line in raw_text.strip().splitlines():
         line = line.strip()
@@ -205,11 +260,11 @@ def _parse_plain_text(raw_text: str, protocol: str, need_jp_filter: bool) -> lis
                 continue
         else:
             continue
-        parts = ip.split(".")
-        if len(parts) != 4:
+        parts_ip = ip.split(".")
+        if len(parts_ip) != 4:
             continue
         try:
-            if not all(0 <= int(p) <= 255 for p in parts):
+            if not all(0 <= int(p) <= 255 for p in parts_ip):
                 continue
         except ValueError:
             continue
@@ -220,7 +275,7 @@ def _parse_plain_text(raw_text: str, protocol: str, need_jp_filter: bool) -> lis
     return results
 
 
-def _parse_geonode(data: dict) -> list[dict]:
+def _parse_geonode(data: dict, target_country: str) -> list[dict]:
     results = []
     for item in data.get("data", []):
         ip = item.get("ip", "").strip()
@@ -238,11 +293,11 @@ def _parse_geonode(data: dict) -> list[dict]:
 
 # --- Fetching ------------------------------------------------------------
 
-def _fetch_provider(provider: dict) -> list[dict]:
+def _fetch_provider(provider: dict, target_country: str) -> list[dict]:
     name = provider["name"]
     url = provider["url"]
     fmt = provider["format"]
-    need_jp = provider.get("need_jp_filter", False)
+    need_filter = provider.get("need_filter", False)
     protocol = provider.get("protocol", "http")
     ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
           "AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36")
@@ -261,18 +316,18 @@ def _fetch_provider(provider: dict) -> list[dict]:
             if not isinstance(raw, list) or not raw:
                 _print("empty payload")
                 return []
-            parsed = _parse_proxifly(raw, need_jp)
-            _print(f"{len(raw)} items -> {len(parsed)} JP candidates")
+            parsed = _parse_proxifly(raw, need_filter, target_country)
+            _print(f"{len(raw)} items -> {len(parsed)} candidates")
             return parsed
         elif fmt == "plain_text":
-            parsed = _parse_plain_text(r.text, protocol, need_jp)
+            parsed = _parse_plain_text(r.text, protocol, need_filter, target_country)
             _print(f"{len(r.text.splitlines())} lines -> {len(parsed)} candidates")
             return parsed
         elif fmt == "geonode":
             data = r.json()
             total = data.get("total", 0)
-            parsed = _parse_geonode(data)
-            _print(f"{total} total -> {len(parsed)} JP candidates")
+            parsed = _parse_geonode(data, target_country)
+            _print(f"{total} total -> {len(parsed)} candidates")
             return parsed
         else:
             _print(f"unknown format: {fmt}")
@@ -282,15 +337,16 @@ def _fetch_provider(provider: dict) -> list[dict]:
         return []
 
 
-def _fetch_raw_pool() -> list[dict]:
-    _banner(f"[POOL] Fetching proxies from {len(PROVIDERS)} providers...")
+def _fetch_raw_pool(target_country: str) -> list[dict]:
+    providers = _provider_list(target_country)
+    _banner(f"[POOL] Fetching proxies from {len(providers)} providers for {target_country}...")
 
     pool: list[dict] = []
     seen: set[str] = set()
     provider_stats = {}
 
-    for provider in PROVIDERS:
-        parsed = _fetch_provider(provider)
+    for provider in providers:
+        parsed = _fetch_provider(provider, target_country)
         name = provider["name"]
         added = 0
         for p in parsed:
@@ -314,9 +370,17 @@ def _fetch_raw_pool() -> list[dict]:
 
 # --- Verification ---------------------------------------------------------
 
-def _verify_one(p: dict, timeout: int, target_url: str, success_kw: list[str]) -> dict:
+def _country_matches(verified_country: str, target_country: str) -> bool:
+    vc = verified_country.upper()
+    tc = target_country.upper()
+    if tc == "EU":
+        return vc in EU_COUNTRY_CODES
+    return vc == tc
+
+
+def _verify_one(p: dict, timeout: int, target_url: str, success_kw: list[str], target_country: str) -> dict:
     p = dict(p)
-    p.update(alive=False, is_jp=False, target_ok=False,
+    p.update(alive=False, country_ok=False, target_ok=False,
              ms_ip=-1, ms_tgt=-1, real_score=0, verified_country="?")
 
     proxies = {"http": p["proxy"], "https": p["proxy"]}
@@ -330,9 +394,9 @@ def _verify_one(p: dict, timeout: int, target_url: str, success_kw: list[str]) -
         country = data.get("country", "?")
         p.update(alive=True, ms_ip=ms_ip, verified_country=country,
                  verified_ip=data.get("ip", p["ip"]))
-        if country != "JP":
+        if not _country_matches(country, target_country):
             return p
-        p["is_jp"] = True
+        p["country_ok"] = True
     except Exception:
         return p
 
@@ -351,7 +415,7 @@ def _verify_one(p: dict, timeout: int, target_url: str, success_kw: list[str]) -
 
 
 def _score(p: dict) -> float:
-    if not p.get("is_jp"):
+    if not p.get("country_ok"):
         return 0.0
     score = 0.0
     if p.get("target_ok"):
@@ -366,56 +430,58 @@ def _score(p: dict) -> float:
     return round(score, 1)
 
 
-def _verify_pool(pool: list[dict], target_url: str, success_kw: list[str]) -> list[dict]:
+def _verify_pool(pool: list[dict], target_url: str, success_kw: list[str], target_country: str) -> list[dict]:
     _print()
-    _print(f"[VERIFY] Verifying {len(pool)} proxies ({WORKERS} threads)...")
+    _print(f"[VERIFY] Verifying {len(pool)} proxies ({WORKERS} threads) for {target_country}...")
     _print(_sep("-"))
     verified = []
     total = len(pool)
-    jp_count = 0
-    jp_site_count = 0
+    country_count = 0
+    country_site_count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool_ex:
-        fmap = {pool_ex.submit(_verify_one, p, TEST_TIMEOUT, target_url, success_kw): i
+        fmap = {pool_ex.submit(_verify_one, p, TEST_TIMEOUT, target_url, success_kw, target_country): i
                 for i, p in enumerate(pool, 1)}
         for fut in concurrent.futures.as_completed(fmap):
             idx = fmap[fut]
             r = fut.result()
             verified.append(r)
-            if r["is_jp"] and r["target_ok"]:
-                jp_site_count += 1
-                icon = f"JP+site OK {r['ms_tgt']:>5}ms  score={r['real_score']}"
-            elif r["is_jp"]:
-                jp_count += 1
-                icon = f"JP (site?) ({r['ms_ip']}ms)"
+            if r["country_ok"] and r["target_ok"]:
+                country_site_count += 1
+                icon = f"{target_country}+site OK {r['ms_tgt']:>5}ms  score={r['real_score']}"
+            elif r["country_ok"]:
+                country_count += 1
+                icon = f"{target_country} (site?) ({r['ms_ip']}ms)"
             elif r["alive"]:
-                icon = f"[{r['verified_country']}] not JP"
+                icon = f"[{r['verified_country']}] not {target_country}"
             else:
                 icon = "dead"
             _print(f"  [{idx:>3}/{total}] {r['proxy']:<40} {icon}")
     _print()
-    _print(f"[VERIFY] Results: {jp_site_count} JP+site, {jp_count} JP-only, "
-           f"{total - jp_site_count - jp_count} other/dead")
+    _print(f"[VERIFY] Results: {country_site_count} {target_country}+site, {country_count} {target_country}-only, "
+           f"{total - country_site_count - country_count} other/dead")
     return verified
 
 
 # --- Main flow ------------------------------------------------------------
 
 def fetch_and_verify(target_url: str | None = None,
-                     success_kw: list[str] | None = None) -> list[dict]:
-    """Fetch and verify proxies against a specific target.
+                     success_kw: list[str] | None = None,
+                     target_country: str = "JP") -> list[dict]:
+    """Fetch and verify proxies against a specific target and country.
 
     Args:
         target_url: URL to test proxy access against (defaults to ekaigotenshoku)
         success_kw: Keywords that must appear in target page HTML
+        target_country: ISO country code or 'EU' to filter proxies
     """
     if target_url is None:
         target_url = DEFAULT_TARGET_URL
     if success_kw is None:
         success_kw = DEFAULT_SUCCESS_KW
 
-    full_pool = _fetch_raw_pool()
+    full_pool = _fetch_raw_pool(target_country)
     if not full_pool:
-        _print("\n[ERROR] No proxies fetched from any provider. Try again later.")
+        _print(f"\n[ERROR] No proxies fetched from any provider for {target_country}. Try again later.")
         return []
 
     good: list[dict] = []
@@ -437,10 +503,10 @@ def fetch_and_verify(target_url: str | None = None,
         for p in batch:
             tested_ips.add(p["ip"])
 
-        verified = _verify_pool(batch, target_url, success_kw)
-        new_good = [v for v in verified if v["is_jp"] and v["target_ok"]]
+        verified = _verify_pool(batch, target_url, success_kw, target_country)
+        new_good = [v for v in verified if v["country_ok"] and v["target_ok"]]
         good.extend(new_good)
-        _print(f"  [ROUND] '{level}': +{len(new_good)} JP proxies accessing target "
+        _print(f"  [ROUND] '{level}': +{len(new_good)} {target_country} proxies accessing target "
                f"(total good: {len(good)})")
 
         if len(good) >= MIN_GOOD:
@@ -448,53 +514,63 @@ def fetch_and_verify(target_url: str | None = None,
             break
 
     if not good:
-        _print("\n  [WARN] No proxy can access target - salvaging JP-alive proxies as fallback")
+        _print(f"\n  [WARN] No proxy can access target - salvaging {target_country}-alive proxies as fallback")
         untested = [p for p in full_pool if p["ip"] not in tested_ips][:TOP_N]
         if untested:
-            verified = _verify_pool(untested, target_url, success_kw)
-            good = [v for v in verified if v["is_jp"]]
+            verified = _verify_pool(untested, target_url, success_kw, target_country)
+            good = [v for v in verified if v["country_ok"]]
         else:
             fallback_batch = full_pool[:TOP_N]
-            verified = _verify_pool(fallback_batch, target_url, success_kw)
-            good = [v for v in verified if v["is_jp"]]
+            verified = _verify_pool(fallback_batch, target_url, success_kw, target_country)
+            good = [v for v in verified if v["country_ok"]]
 
     good.sort(key=lambda x: -x.get("real_score", 0))
     return good
 
 
-def save(proxies: list[dict], target_url: str) -> None:
+def save(proxies: list[dict], target_url: str, target_country: str) -> None:
     now = datetime.now().isoformat()
     for p in proxies:
         p["verified_at"] = now
+    cc = target_country.lower()
+    if cc == "eu":
+        filename = "europe_working_proxies.json"
+    else:
+        # Map ISO back to friendly name for filename consistency
+        rev = {v.lower(): k for k, v in COUNTRY_CODES.items()}
+        filename = f"{rev.get(cc, cc)}_working_proxies.json"
+    working_file = Path(filename)
     out = {
         "updated_at": now,
         "source": "multi-provider (Proxifly + ProxyScrape + GeoNode + Monosans + SpeedX + ClarkEtM)",
         "target": target_url,
+        "country": target_country,
         "count": len(proxies),
         "proxies": proxies,
     }
-    WORKING_FILE.write_text(json.dumps(out, ensure_ascii=False, indent=2),
+    working_file.write_text(json.dumps(out, ensure_ascii=False, indent=2),
                             encoding="utf-8")
+    _print(f"\n  [SAVE] {working_file}  ({len(proxies)} {target_country} proxies)")
 
 
 if __name__ == "__main__":
-    target_url, success_kw, label = _load_target_from_args()
+    target_url, success_kw, label, country = _load_target_from_args()
 
-    _banner(f"Multi-Provider JP Proxy Fetcher v4 - {datetime.now():%Y-%m-%d %H:%M}")
+    _banner(f"Multi-Country Proxy Fetcher v5 - {datetime.now():%Y-%m-%d %H:%M}")
     _print(f"  Target:  {label}")
-    _print(f"  Sources: {len(PROVIDERS)} providers")
+    _print(f"  Country: {country}")
+    _print(f"  Sources: dynamic provider list")
 
-    good = fetch_and_verify(target_url=target_url, success_kw=success_kw)
+    good = fetch_and_verify(target_url=target_url, success_kw=success_kw, target_country=country)
 
     if not good:
-        _print("\n[ERROR] Could not get any live JP proxies. Try again in a few minutes.")
+        _print(f"\n[ERROR] Could not get any live {country} proxies. Try again in a few minutes.")
         raise SystemExit(1)
 
-    _banner(f"{len(good)} verified JP proxies (sorted by real score)")
+    _banner(f"{len(good)} verified {country} proxies (sorted by real score)")
     for i, p in enumerate(good[:15], 1):
         tgt = "site:OK" if p["target_ok"] else "site:?"
         _print(f"  {i:>2}. {p['proxy']:<40} score={p['real_score']:>5}  "
                f"{tgt}  {p.get('ms_tgt', p['ms_ip'])}ms  {p['anonymity']}")
-    save(good, target_url=target_url)
-    _print(f"\n  [SAVE] {WORKING_FILE}  ({len(good)} proxies)")
-    _print(f"  [NEXT] python proxy/checker.py  or  python main.py")
+    save(good, target_url=target_url, target_country=country)
+    _print(f"  [NEXT] python proxy/checker.py --country {country.lower()}  or  python main.py")
