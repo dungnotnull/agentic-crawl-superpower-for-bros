@@ -63,30 +63,25 @@ def _safe_print(msg: str) -> None:
 def _print_logo() -> None:
     """Display the project ASCII logo on startup."""
     logo_lines = [
-        "    ========================================================================",
-        "    |                                                                      |",
-        "    |    ______                      __        ____                        |",
-        "    |   / ____/________  ____ _ ___/ /_  ___/ / /__  ____  _____         |",
-        "    |  / /    / ___/ _ \/ __ `/ /__/ __ \/ _  / / _ \/ __ \/ ___/         |",
-        "    | / /___  / /  /  __/ /_/ / /__/ / / / /_/ / /  __/ / / /__ \          |",
-        "    | \____/ /_/   \___/\__,_/_/\__/_/ /_/\__,_/_/\___/_/ /_/___/          |",
-        "    |         _____ ________________  __  ______  ____  _____            |",
-        "    |        / ___// ____/ ____/ __ \/ / / / __ \/ __ \/ ___/             |",
-        "    |        \__ \/ /   / /_  / /_/ / /_/ / /_/ / / / /__ \                |",
-        "    |       ___/ / /___/ __/ / _, _/ __  / ____/ /_/ /__/ /               |",
-        "    |      /____/\____/_/   /_/ |_/_/ /_/_/    \____/____/                |",
-        "    |         ____  ____  _____ _____ _____ _____                          |",
-        "    |        / __ \/ __ \/ ___// ___// ___// ___/                          |",
-        "    |       / /_/ / / / /__ \ \__ \ \__ \ \__ \                            |",
-        "    |      / _, _/ /_/ /__/ /__/ / __/ / __/ /__/                         |",
-        "    |     /_/ |_|\____/____/____/____/____/____/                           |",
-        "    |                                                                      |",
-        "    |         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+              |",
-        "    |         |  NEVER-STOP WEB CRAWLER  |  v2.1  |  MIT  |              |",
-        "    |         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+              |",
-        "    |                                                                      |",
-        "    ========================================================================",
-    ]
+        "                              __                        ",
+        "                             /\\ \\__  __                ",
+        "   __       __      __    ___\\ \ ,_\\/\\_\    ___        ",
+        " /'__`\\   /'_ `\\  /'__`\\/' _ `\\ \ \/\\/\\ \  /'___\\      ",
+        "/\\ \\L\\.\_/\\ \\L\\ \/\\  __//\\ \\/\\ \ \ \_\\ \ \/\\ \\__/     ",
+        "\\ \\__/\\.\\_\\ \\____ \\ \\____\\ \\_\\ \\_\\ \\__\\ \\_\\ \\____\\    ",
+        " \\/__/\\//_/\\___L\\ \\/____/\\/_/\\/_/\\/__/ \\/_/\\/____/    ",
+        "            /\\____/                                     ",
+        "            \\_/__/                                      ",
+        "                                  ___                   ",
+        "                                 /\\ \\                  ",
+        "  ___   _ __    __     __  __  __\\//\\ \\      __   _ __ ",
+        " /'___/`\\`'__\\ /'__`\\  /\\ \\/\\ \/\\ \\ \\ \\   /'__`\\/\\`'__\\",
+        "/\\ \\__/\\ \\//\\ \\L\\.\\_\\ \\ \\_/ \\_/ \\ \\_\\ \\_/\\  __/\\ \\/ ",
+        "\\ \\____\\\\ \\_\\ \\__/\\.\\_\\ \\___x___/' /\\____\\ \\____\\ \\_\ ",
+        " \\/____/ \\/_/ \\/__/\\//_/ \\/__//__/   \\/____/\\/____/ \\/_/ ",
+        "                                                        ",
+        "                                                        "
+]
     for raw_line in logo_lines:
         _safe_print(raw_line)
 
@@ -238,10 +233,10 @@ async def main() -> None:
         config.use_bayesian_scoring = True
 
     # --- Startup banner ---
-    sep = "=" * 72
-    _safe_print(f"\n{sep}")
-    _safe_print(f"  Crawl-Superpower-for-Bros v2")
-    _safe_print(f"  Never-Stop Orchestrator - {datetime.now():%Y-%m-%d %H:%M:%S}")
+    sep = "=" * 80
+    _print_logo()
+    _safe_print(f"LOOP ORCHESTRATOR | MIT | HOANGDUNG - {datetime.now():%Y-%m-%d %H:%M:%S}")
+    _safe_print(f"Github repo: https://github.com/dungnotnull/agentic-crawl-superpower-for-bros")
     _safe_print(f"{sep}")
 
     # --- Proxy country selection ---
@@ -322,8 +317,6 @@ async def main() -> None:
     _safe_print(f"  Block:      {config.block_threshold} attempts before permanent block")
     _safe_print(f"  Headless:   {config.headless}")
     _safe_print(f"  Output:     {run_dir}")
-    _safe_print(f"{sep}")
-    _print_logo()
     _safe_print(f"{sep}")
     _safe_print(f"\n  [START] The crawl loop will NOT stop until target is met.")
     _safe_print(f"  [START] If no proxies are available, it will wait and keep searching.")
