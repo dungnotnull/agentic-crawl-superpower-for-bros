@@ -31,6 +31,7 @@ try:
     from .crawler import CrawlEngine
     from .exporter import dedup
     from .proxy_manager import ProxyManager
+    from .proxy_tracker import ProxyTracker
     from .site_mappings import load_site_mapping, list_available_sites
 except ImportError:
     from checkpoint import (
@@ -44,6 +45,7 @@ except ImportError:
     from crawler import CrawlEngine
     from exporter import dedup
     from proxy_manager import ProxyManager
+    from proxy_tracker import ProxyTracker
     from site_mappings import load_site_mapping, list_available_sites
 
 
@@ -74,6 +76,7 @@ def _parse_args() -> dict:
         "max_pages": None,
         "clean": False,
         "headless": True,
+        "bayesian": False,
     }
     i = 0
     while i < len(args):
@@ -89,6 +92,8 @@ def _parse_args() -> dict:
             result["clean"] = True; i += 1
         elif args[i] == "--no-headless":
             result["headless"] = False; i += 1
+        elif args[i] == "--bayesian":
+            result["bayesian"] = True; i += 1
         elif args[i] in ("--help", "-h"):
             _print_help(); sys.exit(0)
         else:
@@ -107,11 +112,13 @@ def _print_help() -> None:
         "  --max-pages N       Max listing pages per proxy (0 = unlimited)\n"
         "  --clean             Delete previous output before starting\n"
         "  --no-headless       Run browser with visible window\n"
+        "  --bayesian          Use Bayesian scoring (Beta-Binomial + latency model)\n"
         "  --help, -h          Show this help message\n\n"
         "Examples:\n"
         "  python main.py\n"
         "  python main.py --target-jobs 240\n"
         "  python main.py --site ekaigotenshoku --target-jobs 500\n"
+        "  python main.py --bayesian --target-jobs 500\n"
     )
 
 
@@ -155,6 +162,8 @@ async def main() -> None:
     if args["max_pages"] is not None:
         config.max_pages = args["max_pages"]
     config.headless = args["headless"]
+    if args["bayesian"]:
+        config.use_bayesian_scoring = True
 
     # --- Startup banner ---
     sep = "=" * 72
@@ -170,7 +179,7 @@ async def main() -> None:
 
     # Check proxy availability
     _safe_print(f"  [INIT] Checking proxy cache...")
-    pm = ProxyManager(config, site_name=args['site'])
+    pm = ProxyManager(config, site_name=args['site'], tracker=tracker)
     proxies = pm.load_proxies()
     if proxies:
         _safe_print(f"  [INIT] Found {len(proxies)} cached proxies")
@@ -206,6 +215,16 @@ async def main() -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = output_dir / f"run_{timestamp}"
         run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Initialize proxy tracker
+    tracker = ProxyTracker(config)
+    tracker_path = run_dir / "proxy_tracker.json"
+    if tracker_path.exists():
+        tracker.load(tracker_path)
+        _safe_print(f"  [TRACKER] Loaded {len(tracker.proxies)} tracked proxies"
+                     f" ({len(tracker.get_active_proxies())} active)")
+    else:
+        _safe_print(f"  [TRACKER] New proxy tracker initialized")
         state = init_checkpoint(run_dir, mapping.url.listing_url, config.target_jobs)
         _safe_print(f"  [INIT] New run directory: {run_dir.name}")
 
@@ -246,10 +265,16 @@ async def main() -> None:
     _safe_print()
 
     # Create engine and run - THE LOOP NEVER BREAKS
-    engine = CrawlEngine(mapping, config)
+    engine = CrawlEngine(mapping, config, tracker=tracker)
     try:
         results = await engine.crawl_forever(run_dir, state)
     finally:
+        # Save final tracker state
+        try:
+            tracker.save(run_dir / "proxy_tracker.json")
+        except Exception as e:
+            _safe_print(f"  [TRACKER] Failed to save tracker: {e}")
+
         # Stop dashboard on crawl completion
         if dashboard_proc:
             dashboard_proc.terminate()

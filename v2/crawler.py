@@ -36,6 +36,7 @@ try:
     )
     from .config import CrawlConfig
     from .exporter import dedup, save_results, save_final_json
+    from .proxy_tracker import ProxyTracker
     from .site_mappings import SiteMapping
 except ImportError:
     from checkpoint import (  # type: ignore[no-redef]
@@ -47,6 +48,7 @@ except ImportError:
     )
     from config import CrawlConfig  # type: ignore[no-redef]
     from exporter import dedup, save_results, save_final_json  # type: ignore[no-redef]
+    from proxy_tracker import ProxyTracker  # type: ignore[no-redef]
     from site_mappings import SiteMapping  # type: ignore[no-redef]
 
 
@@ -186,13 +188,27 @@ async def find_next_page(page, mapping: SiteMapping) -> str | None:
 
 async def fetch_detail_page(page, job_id: str, detail_url: str,
                             detail_dir: Path, config: CrawlConfig,
-                            max_retries: int = 2) -> tuple[bool, str | None]:
-    """Fetch one detail page, save HTML. Returns (success, relative_html_path)."""
+                            rate_limit: dict | None = None,
+                            max_retries: int = 2,
+                            latencies: list[float] | None = None,
+                            ) -> tuple[bool, str | None]:
+    """Fetch one detail page, save HTML. Returns (success, relative_html_path).
+
+    If a ``rate_limit`` dict is provided, it will be updated on:
+      - Block detection → step up the multiplier (slow down)
+      - Success → increment recovery counter, step down after threshold
+
+    If a ``latencies`` list is provided, elapsed times of successful
+    detail-page loads are appended for Bayesian latency modeling.
+    """
     for attempt in range(max_retries + 1):
         try:
+            t0 = time.time()
             await page.goto(detail_url, wait_until="load", timeout=45000)
+            elapsed = time.time() - t0
             await asyncio.sleep(random.uniform(config.detail_delay_min,
-                                               config.detail_delay_max))
+                                               config.detail_delay_max) *
+                                (rate_limit["current_multiplier"] if rate_limit else 1.0))
 
             html = await page.content()
 
@@ -204,6 +220,18 @@ async def fetch_detail_page(page, job_id: str, detail_url: str,
                 except Exception:
                     pass
                 matched_kw = [kw for kw in BLOCK_KW if kw in html.lower()]
+
+                # Step up rate limit multiplier
+                if rate_limit:
+                    old = rate_limit["current_multiplier"]
+                    rate_limit["current_multiplier"] = min(
+                        config.rate_limit_multiplier_max,
+                        old + config.rate_limit_step_up)
+                    rate_limit["recovery_counter"] = 0
+                    rate_limit["detections_this_session"] += 1
+                    _log("RATE", f"Block detected (matched: {matched_kw}), "
+                         f"delay multiplier {old}x -> {rate_limit['current_multiplier']}x")
+
                 if attempt < max_retries:
                     backoff = 4 * (2 ** attempt)
                     _log("BLOCK", f"Job {job_id} blocked (matched: {matched_kw}), "
@@ -227,6 +255,23 @@ async def fetch_detail_page(page, job_id: str, detail_url: str,
             html_filename = f"job_{job_id}.html"
             html_path = detail_dir / html_filename
             html_path.write_text(html, encoding="utf-8")
+
+            # Step down rate limit on sustained success
+            if rate_limit:
+                rate_limit["recovery_counter"] += 1
+                if rate_limit["recovery_counter"] >= config.rate_limit_recovery_hits:
+                    old = rate_limit["current_multiplier"]
+                    rate_limit["current_multiplier"] = max(
+                        config.rate_limit_multiplier_min,
+                        old - config.rate_limit_step_down)
+                    rate_limit["recovery_counter"] = 0
+                    _log("RATE", f"Sustained recovery, "
+                         f"delay multiplier {old}x -> {rate_limit['current_multiplier']}x")
+
+            # Record latency for Bayesian modeling
+            if latencies is not None:
+                latencies.append(elapsed)
+
             return True, f"html/detail/{html_filename}"
 
         except Exception as e:
@@ -251,6 +296,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                            start_page: int = 1,
                            resume_detail_only: bool = False,
                            total_so_far: int = 0,
+                           tracker: ProxyTracker | None = None,
                            ) -> tuple[list[dict], int]:
     """Crawl listing pages + detail pages with full checkpointing.
 
@@ -265,7 +311,18 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
     browser = None
     new_items: list[dict] = []
     fetches_done = 0
+    fetches_failed = 0
+    blocks_detected = 0
     pages_visited = 0
+
+    # Rate limiter state for this proxy session
+    rate_limit = {
+        "current_multiplier": config.rate_limit_multiplier_min,
+        "recovery_counter": 0,
+        "detections_this_session": 0,
+    }
+    # Latency observations for Bayesian modeling
+    latencies: list[float] = []
 
     try:
         _log("BROWSER", "Launching CloakBrowser (headless, humanized, geoIP)...")
@@ -315,7 +372,8 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                     _log("CRAWL", f"Fetching job {jid} \"{title[:40]}\" "
                          f"({job_idx}/{len(pg['jobs'])})...")
                     success, detail_path = await fetch_detail_page(
-                        page, jid, durl, detail_dir, config)
+                        page, jid, durl, detail_dir, config,
+                        rate_limit=rate_limit, latencies=latencies)
                     job["detail_fetched"] = success
                     job["detail_html"] = detail_path
                     save_checkpoint(run_dir, state)
@@ -335,6 +393,8 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                         _log("SAVED", f"Job {jid} \"{title[:40]}\" -> "
                              f"{_log_progress(state['total_jobs_extracted'], config.target_jobs)}")
                     else:
+                        fetches_failed += 1
+                        blocks_detected += 1
                         exceeded = _record_blocked_job(
                             state, jid, durl, job.get("title", ""),
                             threshold=config.block_threshold)
@@ -392,7 +452,8 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
 
             _log("PAGE", f"Loading listing page {page_num}: {current_url[:70]}...")
             await page.goto(current_url, wait_until="domcontentloaded", timeout=45000)
-            await asyncio.sleep(random.uniform(config.delay_min, config.delay_max))
+            await asyncio.sleep(random.uniform(config.delay_min, config.delay_max) *
+                                rate_limit["current_multiplier"])
             pages_visited += 1
 
             html = await page.content()
@@ -407,6 +468,15 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                 _log("WARN", f"Failed to save listing HTML: {e}")
 
             if any(kw in html.lower() for kw in BLOCK_KW):
+                # Step up rate limit on listing block
+                old = rate_limit["current_multiplier"]
+                rate_limit["current_multiplier"] = min(
+                    config.rate_limit_multiplier_max,
+                    old + config.rate_limit_step_up)
+                rate_limit["recovery_counter"] = 0
+                rate_limit["detections_this_session"] += 1
+                _log("RATE", f"Listing block detected, delay multiplier "
+                     f"{old}x -> {rate_limit['current_multiplier']}x")
                 _log("BLOCK", f"Blocked at listing page {page_num} — stopping this proxy")
                 break
             if not any(kw in html for kw in mapping.success_keywords):
@@ -501,7 +571,8 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                 _log("CRAWL", f"Fetching job {jid} \"{title}\" "
                      f"({job_idx}/{len(pg_entry['jobs'])} on page {page_num})...")
                 success, detail_path = await fetch_detail_page(
-                    page, jid, durl, detail_dir, config)
+                    page, jid, durl, detail_dir, config,
+                    rate_limit=rate_limit, latencies=latencies)
                 job["detail_fetched"] = success
                 job["detail_html"] = detail_path
                 save_checkpoint(run_dir, state)
@@ -528,6 +599,8 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                         await asyncio.sleep(pause)
                         detail_count_in_batch = 0
                 else:
+                    fetches_failed += 1
+                    blocks_detected += 1
                     exceeded = _record_blocked_job(
                         state, jid, durl, job.get("title", ""),
                         threshold=config.block_threshold)
@@ -565,10 +638,33 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
             page_num += 1
             pages_done_this_proxy += 1
 
+        # Report session results to tracker
+        if tracker:
+            avg_lat = None
+            if latencies:
+                avg_lat = sum(latencies) / len(latencies)
+            tracker.record(
+                proxy,
+                success_count=len(new_items),
+                fail_count=fetches_failed,
+                block_count=blocks_detected,
+                pages_visited=pages_visited,
+                avg_latency=avg_lat,
+            )
+
+        # Log rate limiting summary
+        if rate_limit["detections_this_session"] > 0:
+            _log("RATE", f"Session ended with delay multiplier "
+                 f"{rate_limit['current_multiplier']}x "
+                 f"({rate_limit['detections_this_session']} detections)")
+
         return new_items, pages_visited
 
     except Exception as e:
         _log("ERROR", f"{type(e).__name__}: {e}")
+        # Report failure to tracker
+        if tracker:
+            tracker.record_failure(proxy)
         return new_items, pages_visited
     finally:
         if browser:
@@ -588,9 +684,11 @@ class CrawlEngine:
       - Blocked jobs tracked separately after BLOCK_THRESHOLD attempts.
     """
 
-    def __init__(self, mapping: SiteMapping, config: CrawlConfig):
+    def __init__(self, mapping: SiteMapping, config: CrawlConfig,
+                 tracker: ProxyTracker | None = None):
         self.mapping = mapping
         self.config = config
+        self.tracker = tracker
 
     async def crawl_forever(self, run_dir: Path, state: dict) -> list[dict]:
         """The main crawl loop that never stops until criteria are met."""
@@ -607,6 +705,10 @@ class CrawlEngine:
         _log("CONFIG", f"Block threshold: {self.config.block_threshold} attempts")
         _log("CONFIG", f"Headless: {self.config.headless}")
         _log("CONFIG", f"Output: {run_dir}")
+
+        # Log proxy tracker status
+        if self.tracker:
+            _log("TRACKER", self.tracker.summary())
 
         # Determine resume state
         if state.get("pages"):
@@ -695,6 +797,7 @@ class CrawlEngine:
                 start_page=current_start,
                 resume_detail_only=current_resume,
                 total_so_far=len(dedup(all_results)),
+                tracker=self.tracker,
             )
 
             if items:
@@ -714,6 +817,20 @@ class CrawlEngine:
                 wait = random.uniform(4, 9)
                 _log("WAIT", f"Proxy #{proxy_num} failed — next proxy in {wait:.1f}s...")
                 await asyncio.sleep(wait)
+
+            # Persist tracker state after each proxy session
+            if self.tracker:
+                tracker_path = run_dir / "proxy_tracker.json"
+                self.tracker.save(tracker_path)
+                retired = [p for p, e in self.tracker.proxies.items()
+                           if e.get("retired")]
+                if len(retired) != getattr(self, '_tracker_retired_count', 0):
+                    self._tracker_retired_count = len(retired)
+                    if retired:
+                        last_retired = retired[-1]
+                        reason = self.tracker.proxies[last_retired].get("retired_reason", "")
+                        _log("RETIRE", f"Proxy retired: {last_retired[:50]} ({reason})")
+                    _log("TRACKER", self.tracker.summary())
 
             # Update state tracking
             pend = [p for p in state.get("pages", [])
@@ -915,8 +1032,14 @@ class CrawlEngine:
                         _log("CRAWL", f"Retry job {jid} \"{title}\" "
                              f"(attempt {retries}/{self.config.block_threshold})...")
 
+                        retry_rate_limit = {
+                            "current_multiplier": self.config.rate_limit_multiplier_min,
+                            "recovery_counter": 0,
+                            "detections_this_session": 0,
+                        }
                         success, detail_path = await fetch_detail_page(
-                            page, jid, durl, detail_dir, self.config)
+                            page, jid, durl, detail_dir, self.config,
+                            rate_limit=retry_rate_limit)
 
                         if success:
                             # Find the page this job belongs to
@@ -962,6 +1085,10 @@ class CrawlEngine:
                                  f"{_log_progress(len(all_results), self.config.target_jobs)}")
                             all_to_retry.remove(job)
 
+                            # Report retry success to tracker
+                            if self.tracker:
+                                self.tracker.record_success(proxy)
+
                             # Update blocked job entry in state for the retried job from pages
                             for pg in state.get("pages", []):
                                 if not pg:
@@ -974,6 +1101,8 @@ class CrawlEngine:
 
                         else:
                             # Still blocked/failed
+                            if self.tracker:
+                                self.tracker.record_failure(proxy)
                             _record_blocked_job(
                                 state, jid, durl, title,
                                 threshold=self.config.block_threshold)
@@ -1035,7 +1164,7 @@ class CrawlEngine:
             from .proxy_manager import ProxyManager
         except ImportError:
             from proxy_manager import ProxyManager  # type: ignore[no-redef]
-        pm = ProxyManager(self.config)
+        pm = ProxyManager(self.config, tracker=self.tracker)
         return pm.load_proxies()
 
     def _refresh_proxies(self) -> None:

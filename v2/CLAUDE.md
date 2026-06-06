@@ -13,7 +13,8 @@ The v2 codebase is a complete rewrite of v1, designed for multi-site support and
 - **`config.py`** — `CrawlConfig` dataclass. All tunables in one place. Supports env vars and CLI overrides.
 - **`checkpoint.py`** — Atomic checkpoint saves (write-to-tmp + rename). Version 2 format with block_threshold field.
 - **`exporter.py`** — `save_results()` for JSON/CSV/metadata, `save_final_json()` for per-job structured JSON in `output-final-json/`. Handles both string and dict field definitions from site mappings.
-- **`proxy_manager.py`** — `ProxyManager` loads from cache, auto-refetches if stale (30-min TTL), falls back to local proxies. Logs proxy stats (JP count, site-OK count, top score).
+- **`proxy_manager.py`** — `ProxyManager` loads from cache, auto-refetches if stale (30-min TTL), falls back to local proxies. Logs proxy stats (JP count, site-OK count, top score). Integrates with `ProxyTracker` for runtime scoring and retirement filtering.
+- **`proxy_tracker.py`** — `ProxyTracker` tracks per-proxy runtime stats (successes, failures, blocks, latency). Two scoring modes: heuristic (`base × success_ratio × block_penalty × time_decay`) and Bayesian (Beta-Binomial posterior + Normal-Gamma latency + UCB exploration). Auto-retires proxies after N consecutive failures. Persists to `proxy_tracker.json` in the run directory.
 - **`site_mappings.py`** — `SiteMapping` dataclass + YAML loader. Built-in mapping for ekaigotenshoku with JS extraction/pagination code. New sites via YAML files in `sites/`. If YAML doesn't define JS code, falls back to built-in mapping's JS code.
 - **`dashboard.py`** — Embedded SPA web server for browsing results. Multi-site aware.
 - **`proxy/fetcher.py`** — Multi-provider proxy fetcher (v4) with 14 free proxy sources: Proxifly (4 endpoints), ProxyScrape (3 endpoints), GeoNode, FreeProxyList CDN, Monosans (2 endpoints), SpeedX (2 endpoints), ClarkEtM. Supports 3 response formats: proxifly JSON, plain text, geonode API.
@@ -39,6 +40,12 @@ The v2 codebase is a complete rewrite of v1, designed for multi-site support and
 
 9. **YAML field format**: YAML site mappings define fields as dicts with `source` and optional `transform` keys. Built-in mappings use simple string fields. The exporter handles both formats.
 
+10. **Smart proxy scheduling**: `ProxyTracker` replaces round-robin with scored proxy selection. Two modes: heuristic (default, uses `real_score × success_ratio × block_penalty × time_decay`) and Bayesian (`--bayesian`, uses Beta-Binomial P(success) × latency penalty + UCB exploration). Proxies auto-retire after 5 consecutive failures or 3 consecutive blocks. Tracker persists to `proxy_tracker.json` in the run directory for crash-safe resume.
+
+11. **Rate limiting adaptation**: When a block is detected (listing OR detail page), the delay multiplier steps up by 0.5x (max 4.0x). After 20 successful fetches, it steps down by 0.1x. Rate limit state is per-proxy-session — new proxies start fresh. This is independent of the existing block detection and retry system, which still runs underneath.
+
+12. **Latency tracking**: `fetch_detail_page()` timestamps every successful detail fetch via Welford's online algorithm (constant memory). In Bayesian mode, latency variance penalizes proxies with slow/unstable response times. In heuristic mode, latency data is collected but doesn't affect scoring.
+
 ## Language
 
 All code, comments, and documentation are in **English only**. No Vietnamese text anywhere in v2.
@@ -61,3 +68,6 @@ python dashboard.py        # View results
 - YAML site mappings that don't define JS code will fall back to built-in mapping's JS code
 - The `sites/ekaigotenshoku.yaml` file exists but doesn't define JS code — the built-in mapping provides it
 - Proxy fetcher v4 supports 3 response formats; adding a new provider requires adding a dict to the `PROVIDERS` list and optionally a new parser function
+- `ProxyTracker` is optional everywhere — defaults to `None`. All existing proxy/engine code works without it.
+- Bayesian mode is **off by default** — enable with `--bayesian` or `CRAWL_USE_BAYESIAN=true`. It requires more observations to converge, so it's best for long runs (500+ jobs).
+- Rate limit multiplier applies to ALL delays (listing page, detail page). Logged as `[RATE]` tags in terminal output.

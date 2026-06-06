@@ -47,6 +47,22 @@ class CrawlConfig:
     # ── Output ──
     output_dir: Path             # Root output directory
 
+    # ── Proxy scoring & retirement ──
+    proxy_retire_consecutive_failures: int   # Retire after N consecutive failures
+    proxy_retire_consecutive_blocks: int     # Retire after N consecutive blocks
+    proxy_score_decay_hours: float           # Score drops 95%/period
+
+    # ── Bayesian scoring toggle ──
+    use_bayesian_scoring: bool               # Use Beta-Binomial + latency model
+    bayesian_exploration_factor: float       # UCB exploration bonus multiplier
+
+    # ── Rate limiting detection & adaptation ──
+    rate_limit_multiplier_min: float         # Normal delay multiplier (1.0 = no change)
+    rate_limit_multiplier_max: float         # Max slowdown when rate-limited
+    rate_limit_step_up: float                # Increase multiplier by this on detection
+    rate_limit_step_down: float              # Decrease multiplier by this on recovery
+    rate_limit_recovery_hits: int            # Successful fetches before stepping down
+
     # ── Local fallback proxies ──
     local_proxies: list[str]
 
@@ -67,6 +83,20 @@ class CrawlConfig:
         self.proxy_working_file = Path("japan_working_proxies.json")
         self.proxy_fetch_script = "proxy/fetcher.py"
         self.output_dir = Path("output")
+        # Proxy scoring & retirement
+        self.proxy_retire_consecutive_failures = 5
+        self.proxy_retire_consecutive_blocks = 3
+        self.proxy_score_decay_hours = 1.0
+        # Bayesian scoring
+        self.use_bayesian_scoring = False
+        self.bayesian_exploration_factor = 1.0
+        # Rate limiting
+        self.rate_limit_multiplier_min = 1.0
+        self.rate_limit_multiplier_max = 4.0
+        self.rate_limit_step_up = 0.5
+        self.rate_limit_step_down = 0.1
+        self.rate_limit_recovery_hits = 20
+        # Local fallbacks
         self.local_proxies = [
             "socks5://127.0.0.1:1080",
             "socks5://127.0.0.1:7891",
@@ -93,5 +123,23 @@ class CrawlConfig:
             cfg.headless = v.lower() in ("1", "true", "yes")
         if v := os.environ.get("CRAWL_OUTPUT_DIR"):
             cfg.output_dir = Path(v)
+        if v := os.environ.get("CRAWL_PROXY_RETIRE_FAILURES"):
+            cfg.proxy_retire_consecutive_failures = int(v)
+        if v := os.environ.get("CRAWL_PROXY_RETIRE_BLOCKS"):
+            cfg.proxy_retire_consecutive_blocks = int(v)
+        if v := os.environ.get("CRAWL_PROXY_SCORE_DECAY_HOURS"):
+            cfg.proxy_score_decay_hours = float(v)
+        if v := os.environ.get("CRAWL_USE_BAYESIAN"):
+            cfg.use_bayesian_scoring = v.lower() in ("1", "true", "yes")
+        if v := os.environ.get("CRAWL_BAYESIAN_EXPLORATION"):
+            cfg.bayesian_exploration_factor = float(v)
+        if v := os.environ.get("CRAWL_RATE_LIMIT_MAX"):
+            cfg.rate_limit_multiplier_max = float(v)
+        if v := os.environ.get("CRAWL_RATE_LIMIT_STEP_UP"):
+            cfg.rate_limit_step_up = float(v)
+        if v := os.environ.get("CRAWL_RATE_LIMIT_STEP_DOWN"):
+            cfg.rate_limit_step_down = float(v)
+        if v := os.environ.get("CRAWL_RATE_LIMIT_RECOVERY"):
+            cfg.rate_limit_recovery_hits = int(v)
 
         return cfg

@@ -12,6 +12,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 try:
     from .config import CrawlConfig
@@ -22,9 +23,11 @@ except ImportError:
 class ProxyManager:
     """Manages proxy loading, cache validation, and refresh."""
 
-    def __init__(self, config: CrawlConfig, site_name: str = ""):
+    def __init__(self, config: CrawlConfig, site_name: str = "",
+                 tracker: Any = None):
         self.config = config
         self.site_name = site_name
+        self.tracker = tracker
 
     def _cache_is_stale(self, data: dict) -> bool:
         """Check if the proxy cache has exceeded its TTL.
@@ -83,6 +86,31 @@ class ProxyManager:
                     print(f"  [PROXY] Loaded {len(proxies)} proxies "
                           f"(JP: {jp_count}, site-OK: {site_ok}, "
                           f"top score: {top_score})")
+
+                    # Seed tracker with base scores from fetcher
+                    if self.tracker:
+                        for p in raw:
+                            proxy_url = p.get("proxy", "")
+                            if proxy_url:
+                                base = p.get("real_score", 50.0)
+                                self.tracker.set_base_score(proxy_url, base)
+
+                        # Filter out retired proxies
+                        active_before = len(proxies)
+                        proxies = [p for p in proxies
+                                   if not self.tracker.is_retired(p)]
+                        retired_count = active_before - len(proxies)
+                        if retired_count:
+                            print(f"  [PROXY] Filtered {retired_count} retired proxies")
+
+                        # Sort by tracker's runtime score (descending)
+                        proxies.sort(key=lambda p: self.tracker.get_score(p),
+                                     reverse=True)
+                        if proxies:
+                            best_score = self.tracker.get_score(proxies[0])
+                            print(f"  [PROXY] Sorted by runtime score "
+                                  f"(best: {best_score:.1f})")
+
                     return proxies
             except Exception as e:
                 print(f"  [WARN] Failed to read {working_file}: {e}")

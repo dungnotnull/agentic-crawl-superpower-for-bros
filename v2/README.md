@@ -38,6 +38,9 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 | 📺 **Live dashboard** | Built-in web UI to browse crawled jobs and preview saved HTML pages |
 | 📝 **Real-time logging** | Every action logged to terminal with job IDs, names, progress, and elapsed time |
 | 🛡️ **Anti-detection** | Uses CloakBrowser with humanized behavior, geoIP, and careful throttling |
+| 🧠 **Smart proxy scheduling** | Tracks per-proxy success/failure rates; auto-retires bad proxies; scores by runtime performance |
+| ⏱️ **Rate limiting adaptation** | Detects blocks and automatically increases delays; recovers back to baseline on sustained success |
+| 📊 **Bayesian scoring** | Optional Beta-Binomial + latency model with UCB exploration for probabilistic proxy prediction |
 
 ---
 
@@ -51,6 +54,7 @@ v2/
 ├── 💾 checkpoint.py        # Crash-safe state persistence
 ├── 📦 exporter.py          # Multi-format output (JSON, CSV, final JSON)
 ├── 🌐 proxy_manager.py     # Proxy loading, validation, refresh
+├── 📊 proxy_tracker.py     # Per-proxy scoring, auto-retirement, Bayesian model
 ├── 🗺️ site_mappings.py     # YAML-driven site configuration system
 ├── 📺 dashboard.py         # Web UI for browsing results
 ├── 📁 sites/               # Site-specific YAML mappings
@@ -138,6 +142,9 @@ python main.py --max-pages 10
 # Crawl a specific site with a target
 python main.py --site ekaigotenshoku --target-jobs 500
 
+# Use Bayesian scoring for smarter proxy selection
+python main.py --bayesian --target-jobs 500
+
 # Clean start (delete previous output)
 python main.py --clean
 
@@ -211,6 +218,8 @@ All settings can be configured via environment variables, CLI arguments, or dire
 | 🚫 Block threshold | `CRAWL_BLOCK_THRESHOLD` | — | 20 | Attempts before moving to block file |
 | 👁️ Headless | `CRAWL_HEADLESS` | `--no-headless` | True | Run browser without UI |
 | 📁 Output dir | `CRAWL_OUTPUT_DIR` | — | `output` | Root output directory |
+| 🧠 Bayesian scoring | `CRAWL_USE_BAYESIAN` | `--bayesian` | False | Beta-Binomial + latency + UCB scoring |
+| 🔭 Bayesian exploration | `CRAWL_BAYESIAN_EXPLORATION` | — | 1.0 | UCB exploration bonus multiplier |
 
 ---
 
@@ -338,14 +347,22 @@ Standard tabular format for spreadsheet import, with columns: job_id, title, com
 │  ┌─ No proxies? Wait 60s, retry ──────────────┐    │
 │  └──────────────────────────────────────────────┘    │
 │                                                      │
-│  For each proxy:                                     │
+│  ┌─ Proxy tracker seeds base scores ───────────┐    │
+│  │  Filters retired proxies, sorts by score     │    │
+│  │  (heuristic or Bayesian with UCB bonus)      │    │
+│  └──────────────────────────────────────────────┘    │
+│                                                      │
+│  For each proxy (best-scored first):                 │
 │    ├─ ✅ Verify JP IP                                │
 │    ├─ 📄 Crawl listing pages                         │
 │    ├─ For each job on page:                          │
-│    │   ├─ 🕷️ Fetch detail HTML                       │
-│    │   ├─ 🚫 Blocked? Record + retry later           │
+│    │   ├─ 🕷️ Fetch detail HTML (with latency timing)│
+│    │   ├─ 🚫 Blocked? Step up delay multiplier      │
 │    │   ├─ ❌ 20+ fails? → blocked_jobs.json          │
 │    │   └─ 💾 Save checkpoint after each fetch         │
+│    ├─ 📊 Record session to tracker (successes/       │
+│    │   failures/blocks/latency)                      │
+│    ├─ 🔁 Proxy failed too often? Auto-retire         │
 │    └─ ➡️ Next proxy                                  │
 │                                                      │
 │  Check stop criteria:                                │

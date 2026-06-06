@@ -107,6 +107,7 @@ This crawls until all available pages are exhausted.
 |---------|-------------|
 | `--target-jobs 240` | Stop after 240 jobs |
 | `--max-pages 10` | Only crawl 10 listing pages per proxy |
+| `--bayesian` | Use smart proxy scoring with Bayesian prediction |
 | `--clean` | Delete all previous results and start fresh |
 | `--no-headless` | Show the browser window (for debugging) |
 
@@ -197,8 +198,11 @@ pip install -r requirements.txt
 python -m cloakbrowser install
 python proxy/fetcher.py
 
-# Start crawling
+# Start crawling (default)
 python main.py --target-jobs 240
+
+# Start crawling with Bayesian scoring
+python main.py --bayesian --target-jobs 240
 
 # View live dashboard
 # Open: http://localhost:3001
@@ -212,9 +216,10 @@ python main.py --target-jobs 240
 
 ## What to fill in
 
-The only thing you need to decide is:
+The only things you need to decide are:
 
 - **How many jobs do you want?** (`--target-jobs N`)
+- **Use Bayesian scoring?** (`--bayesian`) — optional, for smarter proxy selection on long runs
 
 Everything else has sensible defaults. You don't need to configure anything unless you want to.
 
