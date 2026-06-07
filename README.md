@@ -1,8 +1,6 @@
 <div align="center">
-
 <br />
-
-<img src="https://img.icons8.com/fluency/96/spider-web.png" width="80" height="80" alt="Logo" />
+<img src="https://img.icons8.com/fluency/96/spider.png" width="80" height="80" alt="Logo" />
 
 # 🕷️ Crawl-Superpower-for-Bros
 
