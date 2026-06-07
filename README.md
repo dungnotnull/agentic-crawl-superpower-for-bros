@@ -36,7 +36,7 @@ Web crawling at scale is **hard**. Proxies rotate and die. Sites serve CAPTCHAs.
 
 It's a production-grade, never-stop web crawler built to run for **days unattended** through rotating country-specific proxies. Whether you're scraping job boards, e-commerce catalogs, or any structured data site — this crawler runs until your target is met.
 
-> **Core guarantee:** The crawl loop never stops prematurely.
+> **Core guarantee:** The crawl loop never stops prematurely.  
 > Proxies exhausted? It waits and retries. Job blocked? It rotates proxies and tries again. Crashed? It resumes exactly where it left off.
 
 ### 🎯 Key Highlights
@@ -45,7 +45,7 @@ It's a production-grade, never-stop web crawler built to run for **days unattend
 - 🔄 **14 free proxy providers** aggregated into one pool with smart scoring
 - 🛡️ **Crash-safe checkpointing** — resume exactly where you left off after any crash
 - 🤖 **CAPTCHA detection & avoidance** — reCAPTCHA, hCaptcha, Cloudflare Turnstile detection with automatic proxy switching
-- 🥷 **CloakBrowser stealth** — fingerprint randomization, humanized behavior, geoIP matching, Patchright backend
+- 🦂 **CloakBrowser stealth** — fingerprint randomization, humanized behavior, geoIP matching, Patchright backend
 - 🧠 **Optional LLM integration** — enrich data with Claude, GPT, Gemini, Groq, or local Ollama
 - 🔐 **Optional authentication layer** — auto-login with retry/backoff, session health checks, re-auth on cookie expiry
 - 📊 **Built-in dashboard** — web UI to browse and inspect results in real time
@@ -57,12 +57,12 @@ It's a production-grade, never-stop web crawler built to run for **days unattend
 
 - [✨ Why This Project?](#-why-this-project)
 - [🚀 Quick Start](#-quick-start)
-- [🏗️ Architecture](#️-architecture)
+- [🏗️ Architecture](#-architecture)
 - [🌍 Proxy System](#-proxy-system)
-- [🛡️ Anti-Detection & CAPTCHA Handling](#️-anti-detection--captcha-handling)
+- [🛡️ Anti-Detection & CAPTCHA Handling](#-anti-detection--captcha-handling)
 - [🧠 LLM Integration (Optional)](#-llm-integration-optional)
 - [🔐 Authentication Layer (Optional)](#-authentication-layer-optional)
-- [⚙️ Configuration](#️-configuration)
+- [⚙️ Configuration](#-configuration)
 - [🆕 Adding a New Site](#-adding-a-new-site)
 - [🚫 Block Tracking](#-block-tracking)
 - [🔄 How the Never-Stop Loop Works](#-how-the-never-stop-loop-works)
@@ -79,15 +79,15 @@ It's a production-grade, never-stop web crawler built to run for **days unattend
 
 ### 1. Install Dependencies
 
-``bash
+```bash
 cd v2
 pip install -r requirements.txt
 python -m cloakbrowser install
-``
+```
 
 ### 2. Fetch Proxies
 
-``bash
+```bash
 # Fetch proxies for your target country
 python proxy/fetcher.py --country japan
 python proxy/fetcher.py --country usa
@@ -95,11 +95,11 @@ python proxy/fetcher.py --country europe
 
 # Or verify against a specific site
 python proxy/fetcher.py --site ekaigotenshoku
-``
+```
 
 ### 3. Run the Crawler
 
-``bash
+```bash
 # Interactive mode (prompts for country, auth, resume)
 python main.py
 
@@ -113,9 +113,9 @@ python main.py --backend patchright     # Use Patchright for reCAPTCHA v3 sites
 python main.py --no-headless            # Show browser window
 python main.py --clean                  # Delete previous run and start fresh
 python main.py --help                   # See all options
-``
+```
 
-When you run python main.py interactively, the terminal will ask:
+When you run `python main.py` interactively, the terminal will ask:
 
 1. **Which country proxy?** (1-9 + 0 for no proxy)
 2. **Does the site require authentication?** (Y/N)
@@ -123,51 +123,51 @@ When you run python main.py interactively, the terminal will ask:
 
 ### 4. View Results
 
-``bash
+```bash
 python dashboard.py
-``
+```
 
-Opens a web UI at http://localhost:3001 to browse jobs, preview HTML, and inspect crawl metadata.
+Opens a web UI at `http://localhost:3001` to browse jobs, preview HTML, and inspect crawl metadata.
 
 ---
 
 ## 🏗️ Architecture
 
-``	ext
+```
 v2/
-├── main.py              # Entry point & CLI with interactive prompts
-├── crawler.py           # Never-stop crawl engine + CAPTCHA detection
-├── config.py            # Configuration (env vars, CLI, defaults)
-├── checkpoint.py        # Crash-safe state persistence (atomic write)
-├── exporter.py          # Multi-format output (JSON, CSV, final JSON)
-├── proxy_manager.py     # Proxy loading, validation, refresh
-├── proxy_tracker.py     # Per-proxy scoring, auto-retirement, Bayesian model
-├── site_mappings.py     # YAML-driven site configuration system
-├── dashboard.py         # Web UI for browsing results
-├── auth_manager.py      # Login automation with retry/backoff
-├── llm_integration.py   # LLM API enrichment layer
-├── auth_config.yaml     # Template: login credentials & selectors
-├── llm_config.yaml      # Template: API key, model, prompt
-├── sites/               # Site-specific YAML mappings
-│   └── ekaigotenshoku.yaml
-├── proxy/               # Proxy tools
-│   ├── fetcher.py       # 14-provider multi-country proxy fetcher
-│   └── checker.py       # Re-check cached proxies
-└── output/              # Crawl results (auto-created)
-    └── run_YYYYMMDD_HHMMSS/
-        ├── jobs.json
-        ├── jobs.csv
-        ├── metadata.json
-        ├── checkpoint.json
-        ├── blocked_jobs.json
-        ├── proxy_tracker.json
-        ├── html/
-        │   ├── detail/          # Raw detail page HTML
-        │   └── list_*.html      # Raw listing page HTML
-        └── output-final-json/   # Structured JSON per job
-            ├── job_12345.json
-            └── all_jobs.json
-``
++-- main.py              # Entry point & CLI with interactive prompts
++-- crawler.py           # Never-stop crawl engine + CAPTCHA detection
++-- config.py            # Configuration (env vars, CLI, defaults)
++-- checkpoint.py        # Crash-safe state persistence (atomic write)
++-- exporter.py          # Multi-format output (JSON, CSV, final JSON)
++-- proxy_manager.py     # Proxy loading, validation, refresh
++-- proxy_tracker.py     # Per-proxy scoring, auto-retirement, Bayesian model
++-- site_mappings.py     # YAML-driven site configuration system
++-- dashboard.py         # Web UI for browsing results
++-- auth_manager.py      # Login automation with retry/backoff
++-- llm_integration.py   # LLM API enrichment layer
++-- auth_config.yaml     # Template: login credentials & selectors
++-- llm_config.yaml      # Template: API key, model, prompt
++-- sites/               # Site-specific YAML mappings
+|   +-- ekaigotenshoku.yaml
++-- proxy/               # Proxy tools
+|   +-- fetcher.py       # 14-provider multi-country proxy fetcher
+|   +-- checker.py       # Re-check cached proxies
++-- output/              # Crawl results (auto-created)
+    +-- run_YYYYMMDD_HHMMSS/
+        +-- jobs.json
+        +-- jobs.csv
+        +-- metadata.json
+        +-- checkpoint.json
+        +-- blocked_jobs.json
+        +-- proxy_tracker.json
+        +-- html/
+        |   +-- detail/          # Raw detail page HTML
+        |   +-- list_*.html      # Raw listing page HTML
+        +-- output-final-json/   # Structured JSON per job
+            +-- job_12345.json
+            +-- all_jobs.json
+```
 
 ---
 
@@ -197,14 +197,14 @@ The crawler aggregates free proxies from **14 providers** across multiple protoc
 
 </details>
 
-**Supported countries:** ietnam · japan · china · south korea · singapore · ussia · europe · india · usa
+**Supported countries:** `vietnam` · `japan` · `china` · `south korea` · `singapore` · `russia` · `europe` · `india` · `usa`
 
 ### Proxy Scoring
 
 | Mode | Description |
 |------|-------------|
 | **Heuristic** (default) | Score based on success rate, latency, and CAPTCHA penalty |
-| **Bayesian** (--bayesian) | Beta-Binomial model + latency + Upper Confidence Bound exploration |
+| **Bayesian** (`--bayesian`) | Beta-Binomial model + latency + Upper Confidence Bound exploration |
 
 Proxies are auto-retired when they fail too often. CAPTCHA detections apply a 20% score penalty per event.
 
@@ -217,7 +217,7 @@ Proxies are auto-retired when they fail too often. CAPTCHA detections apply a 20
 The crawler uses [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) — a patched Chromium binary with source-level fingerprint patches:
 
 | Layer | What It Defeats |
-|-------|-----------------|
+|------|-----------------|
 | **Fingerprint randomization** | Canvas, WebGL, AudioContext, hardware concurrency, device memory, screen size, GPU renderer |
 | **Automation suppression** | `navigator.webdriver = true` leak |
 | **WebRTC IP leak protection** | Exposes real IP behind proxy via WebRTC |
@@ -243,13 +243,13 @@ Even with CloakBrowser, aggressive crawling can trigger challenges. The crawler 
 
 ### Choosing a Browser Backend
 
-``bash
+```bash
 # Default: Playwright (full feature support)
 python main.py
 
 # Patchright: for sites using reCAPTCHA v3 Enterprise scoring
 python main.py --backend patchright
-``
+```
 
 > **Note:** Patchright suppresses CDP signals that reCAPTCHA v3 uses for bot detection. However, it breaks `add_init_script()` and proxy auth. Use only when needed.
 
@@ -281,7 +281,7 @@ Enrich every crawled job with AI-extracted structured data.
 
 When enabled, each detail page's HTML is sent to the LLM after crawling. The returned JSON is injected into the output under the key `llm_enhanced`.
 
-> **Security:** Your API key never leaves your machine. The code runs entirely locally.
+> 🔒 **Security:** Your API key never leaves your machine. The code runs entirely locally.
 
 ---
 
@@ -307,7 +307,7 @@ The crawler will:
 
 ### Cookie-Based Auth (Alternative)
 
-``yaml
+```yaml
 # auth_config.yaml
 enabled: true
 auth_type: "cookie"
@@ -315,19 +315,19 @@ cookies:
   - name: "session_id"
     value: "your_cookie_value"
     domain: ".example.com"
-``
+```
 
 ### Session State Persistence
 
 For sites with OAuth/SSO login (LINE, Google), save and reuse browser state:
 
-``python
+```python
 # After successful login:
 await save_auth_state(context, Path("auth_state.json"))
 
 # Before next proxy session:
 ctx = await launch_context_async(storage_state="auth_state.json")
-``
+```
 
 ---
 
@@ -351,13 +351,13 @@ All settings can be configured via **environment variables**, **CLI arguments**,
 
 ### Environment Variable Example
 
-``bash
+```bash
 # .env or shell
 export CRAWL_PROXY_COUNTRY=japan
 export CRAWL_AUTH_REQUIRED=false
 export CRAWL_TARGET_JOBS=240
 python main.py
-``
+```
 
 ---
 
@@ -365,7 +365,7 @@ python main.py
 
 Create a YAML file in `v2/sites/` — **no Python code changes needed**:
 
-``yaml
+```yaml
 # sites/my-new-site.yaml
 name: my-new-site
 display_name: "My New Job Site"
@@ -373,7 +373,7 @@ display_name: "My New Job Site"
 url:
   listing_url: "https://example.com/jobs"
   listing_url_template: "https://example.com/jobs?page={page}"
-  detail_url_pattern: "/jobs/detail/(\\d+)"
+  detail_url_pattern: "/jobs/detail/(\d+)"
 
 success_keywords:
   - "keyword1"
@@ -409,13 +409,13 @@ js_pagination_code: |
     const next = document.querySelector('a.next');
     return next ? next.href : null;
   }
-``
+```
 
 Then run:
 
-``bash
+```bash
 python main.py --site my-new-site
-``
+```
 
 > **Tip:** If your YAML doesn't include `js_extraction_code` or `js_pagination_code`, the system falls back to the built-in mapping's JS code (if one exists for that site name).
 
@@ -425,7 +425,7 @@ python main.py --site my-new-site
 
 When a job's detail page is blocked or fails to load, the crawler retries it on subsequent proxy rotations. After **20 attempts** (configurable), the job is moved to `blocked_jobs.json`:
 
-``json
+```json
 {
   "permanently_blocked": [
     {
@@ -439,49 +439,46 @@ When a job's detail page is blocked or fails to load, the crawler retries it on 
   "still_retrying": [],
   "total_blocked": 1
 }
-``
+```
 
 ---
 
 ## 🔄 How the Never-Stop Loop Works
 
-``	ext
-┌───────────────────────────────────────────────────────────────────┐
-│  Load proxies (14 providers, country-specific)                   │
-│  ├── No proxies? Wait 60s, retry ─────────────────────────────┐  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌── Proxy tracker seeds base scores ──────────────────────────┐  │
-│  │   Filters retired proxies, sorts by score                   │  │
-│  │   (heuristic or Bayesian with UCB bonus)                    │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  For each proxy (best-scored first):                              │
-│    ├── Verify target-country IP                                   │
-│    ├── Detect CAPTCHA (reCAPTCHA / hCaptcha / Turnstile)         │
-│    ├── [Optional] Authenticate if site requires login             │
-│    ├── Crawl listing pages                                        │
-│    │   ├── Session health check (auth required sites)            │
-│    │   └── CAPTCHA detection on listing pages                     │
-│    └── For each job on page:                                      │
-│        ├── Fetch detail HTML (with latency timing)                │
-│        ├── CAPTCHA detection on detail pages                      │
-│        ├── [Optional] Send HTML to LLM for enrichment             │
-│        ├── Blocked? Step up delay multiplier                      │
-│        ├── 20+ fails? → blocked_jobs.json                        │
-│        └── Save checkpoint after each fetch                       │
-│                                                                   │
-│  Record session to tracker (successes / failures / captcha)       │
-│  Proxy failed too often? Auto-retire                              │
-│  Next proxy                                                       │
-│                                                                   │
-│  Check stop criteria:                                              │
-│    ├── TARGET_JOBS met? → DONE                                    │
-│    ├── MAX_PAGES met? → DONE                                      │
-│    ├── Both None & pages exhausted? → DONE                        │
-│    └── Otherwise → back to top                                     │
-└───────────────────────────────────────────────────────────────────┘
-``
+```
+Load proxies (14 providers, country-specific)
+|
++-- No proxies? Wait 60s, retry
+|
++-- Proxy tracker seeds base scores
+|   Filters retired proxies, sorts by score
+|   (heuristic or Bayesian with UCB bonus)
+|
++-- For each proxy (best-scored first):
+|   +-- Verify target-country IP
+|   +-- Detect CAPTCHA (reCAPTCHA / hCaptcha / Turnstile)
+|   +-- [Optional] Authenticate if site requires login
+|   +-- Crawl listing pages
+|   |   +-- Session health check (auth required sites)
+|   |   +-- CAPTCHA detection on listing pages
+|   +-- For each job on page:
+|       +-- Fetch detail HTML (with latency timing)
+|       +-- CAPTCHA detection on detail pages
+|       +-- [Optional] Send HTML to LLM for enrichment
+|       +-- Blocked? Step up delay multiplier
+|       +-- 20+ fails? -> blocked_jobs.json
+|       +-- Save checkpoint after each fetch
+|
++-- Record session to tracker (successes / failures / captcha)
++-- Proxy failed too often? Auto-retire
++-- Next proxy
+|
++-- Check stop criteria:
+    +-- TARGET_JOBS met? -> DONE
+    +-- MAX_PAGES met? -> DONE
+    +-- Both None & pages exhausted? -> DONE
+    +-- Otherwise -> back to top
+```
 
 ---
 
@@ -489,10 +486,10 @@ When a job's detail page is blocked or fails to load, the crawler retries it on 
 
 The built-in web dashboard lets you browse results visually:
 
-``bash
+```bash
 python dashboard.py
 # Opens at http://localhost:3001
-``
+```
 
 Features:
 
@@ -516,10 +513,10 @@ Features:
 
 Install everything at once:
 
-``bash
+```bash
 pip install -r requirements.txt
 python -m cloakbrowser install
-``
+```
 
 ---
 
@@ -529,19 +526,19 @@ python -m cloakbrowser install
 
 Always run from inside the `v2/` folder:
 
-``bash
+```bash
 cd v2
 python main.py --target-jobs 240
-``
+```
 
 ### Console Encoding
 
 Windows Command Prompt and PowerShell may not render Japanese characters or special symbols by default. Use **Windows Terminal** (recommended) or run:
 
-``powershell
+```powershell
 chcp 65001
 python main.py --target-jobs 240
-``
+```
 
 All log output uses ASCII-safe separators so there is no crash on any Windows console.
 
@@ -582,11 +579,11 @@ Contributions are welcome! Here's how you can help:
 
 ### Ideas for Contributions
 
-- Add new site YAML mappings for more job boards
-- Add new proxy providers to the fetcher
-- Add tests and CI
-- Improve documentation and examples
-- Report bugs via [Issues](https://github.com/dungnotnull/agentic-crawl-superpower-for-bros/issues)
+- 🌐 Add new site YAML mappings for more job boards
+- 🔌 Add new proxy providers to the fetcher
+- 🧪 Add tests and CI
+- 📖 Improve documentation and examples
+- 🐛 Report bugs via [Issues](https://github.com/dungnotnull/agentic-crawl-superpower-for-bros/issues)
 
 ---
 
@@ -602,6 +599,6 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 <br />
 
-**Built for the bros who need data**
+**Built for the bros who need data** 🕷️
 
 </div>
