@@ -816,7 +816,7 @@ class CrawlEngine:
         self.config = config
         self.tracker = tracker
         # Load auth config once at engine init (not per-proxy session)
-        self.auth_config = load_auth_config() if config.auth_required else None
+        self.auth_config = load_auth_config() if self.config.auth_required else None
 
     async def crawl_forever(self, run_dir: Path, state: dict) -> list[dict]:
         """The main crawl loop that never stops until criteria are met."""
