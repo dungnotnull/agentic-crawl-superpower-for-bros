@@ -92,7 +92,10 @@ class ProxyManager:
                     return self.load_proxies(allow_refetch=False)
                 raw = data.get("proxies", [])
                 raw.sort(key=lambda x: -x.get("real_score", 0))
-                proxies = [p["proxy"] for p in raw if p.get("proxy")]
+                target_ok = [p for p in raw if p.get("proxy") and p.get("target_ok")]
+                fallback = [p for p in raw if p.get("proxy") and not p.get("target_ok")]
+                ordered = target_ok + fallback
+                proxies = [p["proxy"] for p in ordered]
                 if proxies:
                     top_score = raw[0].get("real_score", "?")
                     country = data.get("country", self.config.proxy_country.upper())

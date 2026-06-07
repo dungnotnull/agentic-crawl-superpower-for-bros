@@ -425,12 +425,13 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
         )
         page = await context.new_page()
 
-        _log("VERIFY", f"Checking if proxy IP is {config.proxy_country.upper() if config.use_proxy else 'DIRECT'}...")
-        is_target_country, ip_addr = await verify_country_ip(page, self.config.proxy_country.upper() if self.config.use_proxy else "DIRECT")
+        country_code = config.proxy_country.upper() if config.use_proxy else "DIRECT"
+        _log("VERIFY", f"Checking if proxy IP is {country_code}...")
+        is_target_country, ip_addr = await verify_country_ip(page, country_code)
         if not is_target_country:
-            _log("SKIP", f"IP is not {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} ({ip_addr}) — skipping this proxy")
+            _log("SKIP", f"IP is not {country_code} ({ip_addr}) — skipping this proxy")
             return [], 0
-        _log("OK", f"{config.proxy_country.upper() if config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
+        _log("OK", f"{country_code} IP confirmed: {ip_addr}")
 
         # CAPTCHA detection at session start
         captcha = await _detect_captcha(page)
@@ -1124,13 +1125,13 @@ class CrawlEngine:
                     )
                     page = await context.new_page()
 
-                    # Verify JP IP
-                    is_target_country, ip_addr = await verify_country_ip(page, self.config.proxy_country.upper() if self.config.use_proxy else "DIRECT")
+                    retry_country_code = self.config.proxy_country.upper() if self.config.use_proxy else "DIRECT"
+                    is_target_country, ip_addr = await verify_country_ip(page, retry_country_code)
                     if not is_target_country:
-                        _log("SKIP", f"Retry: proxy IP is not {self.config.proxy_country.upper() if self.config.use_proxy else 'DIRECT'} ({ip_addr})")
+                        _log("SKIP", f"Retry: proxy IP is not {retry_country_code} ({ip_addr})")
                         continue
 
-                    _log("OK", f"Retry: {self.config.proxy_country.upper() if self.config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
+                    _log("OK", f"Retry: {retry_country_code} IP confirmed: {ip_addr}")
 
                     # Authenticate if required (retry phase)
                     if self.auth_config and self.config.auth_required:
