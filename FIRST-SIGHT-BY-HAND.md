@@ -1,10 +1,10 @@
 # First Sight by Hand
 
-Welcome! This guide walks you through crawling job listings � no coding required.
+Welcome! This guide walks you through crawling job listings — no coding required.
 
 The full step-by-step guide with screenshots and detailed explanations is inside the `v2/` folder:
 
-## ? [v2/FIRST-SIGHT-BY-HAND.md](v2/FIRST-SIGHT-BY-HAND.md)
+## [v2/FIRST-SIGHT-BY-HAND.md](v2/FIRST-SIGHT-BY-HAND.md)
 
 ---
 
@@ -39,7 +39,7 @@ python main.py
 You will be asked:
 1. **Which country proxy?** (1-9, or 0 for no proxy)
 2. **Does the site require authentication?** (Y/N)
-3. **Clean start / Resume / Quit?** (C/R/Q � only if previous run exists)
+3. **Clean start / Resume / Quit?** (C/R/Q — only if previous run exists)
 
 ---
 
@@ -47,8 +47,9 @@ You will be asked:
 
 | Feature | How to enable |
 |---------|---------------|
-| **LLM smart enrichment** | Edit `v2/llm_config.yaml` ? set `enabled: true` ? fill API key |
-| **Login automation** | Edit `v2/auth_config.yaml` ? set `enabled: true` ? fill credentials |
+| **LLM smart enrichment** | Edit `v2/llm_config.yaml` — set `enabled: true` — fill API key |
+| **Login automation** | Edit `v2/auth_config.yaml` — set `enabled: true` — fill credentials |
+| **CAPTCHA avoidance** | Built-in automatic detection; for v3 sites use `--backend patchright` |
 | **No proxy** | Select `0` at the country prompt |
 
 ---

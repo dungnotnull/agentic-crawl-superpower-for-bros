@@ -89,52 +89,75 @@ async def authenticate(page, auth_config: dict[str, Any]) -> bool:
     post_wait = auth_config.get("post_submit_wait", 5.0)
     success_fragment = auth_config.get("success_url_fragment", "")
 
-    try:
-        print(f"  [AUTH] Navigating to login page: {login_url}")
-        await page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(1.5)
+    max_attempts = auth_config.get("login_max_attempts", 3)
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if attempt > 1:
+                backoff = 5 * attempt
+                print(f"  [AUTH] Retry attempt {attempt}/{max_attempts} after {backoff}s...")
+                await asyncio.sleep(backoff)
+                await page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.5)
 
-        # Fill username
-        user_el = await _find_element(page, auth_config["username_selector"])
-        if not user_el:
-            print("  [AUTH] Username field not found - check username_selector")
-            return False
-        await user_el.fill(username)
-        print("  [AUTH] Username entered")
+            suffix = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
+            print(f"  [AUTH] Navigating to login page: {login_url}{suffix}")
+            if attempt == 1:
+                await page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.5)
 
-        # Fill password
-        pass_el = await _find_element(page, auth_config["password_selector"])
-        if not pass_el:
-            print("  [AUTH] Password field not found - check password_selector")
-            return False
-        await pass_el.fill(password)
-        print("  [AUTH] Password entered")
+            # Fill username
+            user_el = await _find_element(page, auth_config["username_selector"])
+            if not user_el:
+                print("  [AUTH] Username field not found - check username_selector")
+                if attempt < max_attempts:
+                    continue
+                return False
+            await user_el.fill(username)
+            print("  [AUTH] Username entered")
 
-        # Click submit
-        submit_el = await _find_element(page, auth_config["submit_selector"])
-        if not submit_el:
-            print("  [AUTH] Submit button not found - check submit_selector")
-            return False
-        await submit_el.click()
-        print("  [AUTH] Submit clicked")
+            # Fill password
+            pass_el = await _find_element(page, auth_config["password_selector"])
+            if not pass_el:
+                print("  [AUTH] Password field not found - check password_selector")
+                if attempt < max_attempts:
+                    continue
+                return False
+            await pass_el.fill(password)
+            print("  [AUTH] Password entered")
 
-        # Wait for result
-        await asyncio.sleep(post_wait)
-        await page.wait_for_load_state("networkidle", timeout=20000)
+            # Click submit
+            submit_el = await _find_element(page, auth_config["submit_selector"])
+            if not submit_el:
+                print("  [AUTH] Submit button not found - check submit_selector")
+                if attempt < max_attempts:
+                    continue
+                return False
+            await submit_el.click()
+            print("  [AUTH] Submit clicked")
 
-        current_url = page.url
-        if success_fragment and success_fragment in current_url:
-            print(f"  [AUTH] Login success detected (URL contains '{success_fragment}')")
+            # Wait for result
+            await asyncio.sleep(post_wait)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                pass  # networkidle can timeout on slow connections
+
+            current_url = page.url
+            if success_fragment and success_fragment in current_url:
+                print(f"  [AUTH] Login success detected (URL contains '{success_fragment}')")
+                return True
+            if success_fragment:
+                print(f"  [AUTH] Warning: success fragment '{success_fragment}' not in URL: {current_url}")
+            else:
+                print(f"  [AUTH] Login submitted (current URL: {current_url})")
             return True
-        if success_fragment:
-            print(f"  [AUTH] Warning: success fragment '{success_fragment}' not in URL: {current_url}")
-        else:
-            print(f"  [AUTH] Login submitted (current URL: {current_url})")
-        return True
 
-    except Exception as e:
-        print(f"  [AUTH] Login automation error: {type(e).__name__}: {e}")
-        return False
+        except Exception as e:
+            print(f"  [AUTH] Login automation error (attempt {attempt}): {type(e).__name__}: {e}")
+            if attempt >= max_attempts:
+                return False
+
+    return False
 
 
 async def is_authenticated(page, auth_config: dict[str, Any]) -> bool:
@@ -173,3 +196,32 @@ async def ensure_authenticated(page, auth_config: dict[str, Any]) -> bool:
         return True
     print("  [AUTH] Session not detected - re-authenticating...")
     return await authenticate(page, auth_config)
+
+# ── Cookie / Session persistence ────────────────────────────────────────
+
+async def save_auth_state(context, path: Path) -> bool:
+    """Save browser storage state (cookies, localStorage) for session reuse.
+
+    Uses Playwright's storage_state API so that subsequent proxy sessions
+    can skip login if cookies are still valid.
+    """
+    try:
+        await context.storage_state(path=str(path))
+        print(f"  [AUTH] Session state saved to {path}")
+        return True
+    except Exception as e:
+        print(f"  [AUTH] Failed to save session state: {e}")
+        return False
+
+
+def has_saved_auth_state(path: Path) -> bool:
+    """Check if a saved auth state file exists and is non-empty."""
+    if not path.exists():
+        return False
+    try:
+        import json
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return bool(data.get("cookies") or data.get("origins"))
+    except Exception:
+        return False
+

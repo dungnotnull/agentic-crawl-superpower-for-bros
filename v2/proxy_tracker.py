@@ -93,6 +93,21 @@ class ProxyTracker:
         self._recalc_score(proxy)
         self._check_retire(proxy)
 
+    def record_captcha(self, proxy: str) -> None:
+        """Record that a CAPTCHA challenge was detected while using this proxy.
+
+        CAPTCHA-flagged proxies are deprioritized (score penalty) but not
+        immediately retired -- they may work again after a cooldown period.
+        """
+        entry = self._ensure(proxy)
+        entry["captcha_detections"] = entry.get("captcha_detections", 0) + 1
+        entry["captcha_detected_at"] = datetime.now().isoformat()
+        entry["last_used"] = datetime.now().isoformat()
+        if self.config.use_bayesian_scoring:
+            entry["beta"] += 1
+            self._global_total_trials += 1
+        self._recalc_score(proxy)
+
     def record_latency(self, proxy: str, elapsed: float) -> None:
         """Record a response-time observation for Bayesian latency model.
 
@@ -242,8 +257,10 @@ class ProxyTracker:
         retired = len([e for e in self.proxies.values() if e.get("retired")])
         total_success = sum(e.get("successes", 0) for e in self.proxies.values())
         total_fail = sum(e.get("failures", 0) for e in self.proxies.values())
+        total_captcha = sum(e.get("captcha_detections", 0) for e in self.proxies.values())
+        captcha_str = f", {total_captcha} captcha" if total_captcha else ""
         return (f"{len(self.proxies)} tracked, {active} active, "
-                f"{retired} retired, {total_success} ok, {total_fail} fail")
+                f"{retired} retired, {total_success} ok, {total_fail} fail{captcha_str}")
 
     # ── Persistence ─────────────────────────────────────────────────────
 
@@ -299,6 +316,8 @@ class ProxyTracker:
                 "latency_n": 0,
                 "latency_mean": 0.0,
                 "latency_m2": 0.0,
+                "captcha_detections": 0,
+                "captcha_detected_at": None,
             }
         return self.proxies[proxy]
 
@@ -369,7 +388,11 @@ class ProxyTracker:
                     # Scale so that 10s latency halves the score
                     latency_penalty = max(0.1, 1.0 / (1.0 + std_err))
 
-            score = p_success * latency_penalty * time_decay * 100.0
+            # CAPTCHA penalty (Bayesian mode)
+            captcha_count = entry.get("captcha_detections", 0)
+            captcha_penalty = 0.80 ** captcha_count
+
+            score = p_success * latency_penalty * captcha_penalty * time_decay * 100.0
             entry["current_score"] = round(score, 1)
         else:
             # ── Heuristic: original formula ──
@@ -384,7 +407,11 @@ class ProxyTracker:
             # Block penalty: each block reduces score by 15% (multiplicative)
             block_penalty = 0.85 ** blocks
 
-            score = base * success_ratio * block_penalty * time_decay
+            # CAPTCHA penalty: each CAPTCHA detection reduces score by 20%
+            captcha_count = entry.get("captcha_detections", 0)
+            captcha_penalty = 0.80 ** captcha_count
+
+            score = base * success_ratio * block_penalty * captcha_penalty * time_decay
             entry["current_score"] = round(score, 1)
 
     def _check_retire(self, proxy: str) -> None:

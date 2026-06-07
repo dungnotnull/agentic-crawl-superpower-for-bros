@@ -71,6 +71,12 @@ class CrawlConfig:
     # -- Authentication --
     auth_required: bool          # Whether the target site requires login
 
+    # -- CloakBrowser backend --
+    browser_backend: str         # "playwright" (default) or "patchright" (helps reCAPTCHA v3)
+
+    # -- CAPTCHA detection --
+    captcha_skip_proxy: bool     # Skip proxy when CAPTCHA detected (default True)
+
     def __init__(self, **kwargs):
         # Defaults
         self.target_jobs = None
@@ -112,6 +118,10 @@ class CrawlConfig:
         ]
         # Authentication
         self.auth_required = False
+        # CloakBrowser backend ("playwright" default, "patchright" for reCAPTCHA v3)
+        self.browser_backend = "playwright"
+        # CAPTCHA detection
+        self.captcha_skip_proxy = True
         # Apply overrides
         for k, v in kwargs.items():
             if hasattr(self, k):
@@ -181,5 +191,10 @@ class CrawlConfig:
             cfg.rate_limit_recovery_hits = int(v)
         if v := os.environ.get("CRAWL_AUTH_REQUIRED"):
             cfg.auth_required = v.lower() in ("1", "true", "yes")
+        if v := os.environ.get("CRAWL_BROWSER_BACKEND"):
+            if v.lower() in ("playwright", "patchright"):
+                cfg.browser_backend = v.lower()
+        if v := os.environ.get("CRAWL_CAPTCHA_SKIP_PROXY"):
+            cfg.captcha_skip_proxy = v.lower() in ("1", "true", "yes")
 
         return cfg

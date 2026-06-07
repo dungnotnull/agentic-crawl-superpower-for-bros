@@ -27,6 +27,12 @@ from typing import Any
 from cloakbrowser import launch_async
 
 try:
+    from .auth_manager import (
+        authenticate,
+        ensure_authenticated,
+        is_authenticated,
+        load_auth_config,
+    )
     from .checkpoint import (
         checkpoint_to_jobs,
         find_latest_incomplete_run,
@@ -39,6 +45,12 @@ try:
     from .proxy_tracker import ProxyTracker
     from .site_mappings import SiteMapping
 except ImportError:
+    from auth_manager import (  # type: ignore[no-redef]
+        authenticate,
+        ensure_authenticated,
+        is_authenticated,
+        load_auth_config,
+    )
     from checkpoint import (  # type: ignore[no-redef]
         checkpoint_to_jobs,
         find_latest_incomplete_run,
@@ -106,6 +118,63 @@ BLOCK_KW = [
     "アクセス制限", "地域制限", "ご利用いただけません",
 ]
 
+
+# CAPTCHA detection selectors - used by _detect_captcha()
+CAPTCHA_SELECTORS = [
+    # reCAPTCHA v2/v3
+    'iframe[src*="recaptcha"]',
+    'div.g-recaptcha',
+    'script[src*="recaptcha"]',
+    # hCaptcha
+    'iframe[src*="hcaptcha"]',
+    'div.h-captcha',
+    # Cloudflare Turnstile
+    'iframe[src*="challenges.cloudflare.com"]',
+    'div.cf-turnstile',
+    # Cloudflare challenge page
+    'div.cf-browser-verification',
+    'div#challenge-running',
+]
+
+CAPTCHA_TEXT_INDICATORS = [
+    "入力確認",        # input confirmation (Japanese)
+    "セキュリティ確認",  # security verification (Japanese)
+    "認証してください",  # please authenticate (Japanese)
+    "通過するには",    # to proceed (Japanese CAPTCHA prompt)
+    "verify you are human",
+    "checking your browser",
+    "please complete the security check",
+    "are you a robot",
+]
+
+
+
+
+
+
+async def _detect_captcha(page, html: str | None = None) -> str | None:
+    """Detect CAPTCHA challenges on the current page.
+
+    Checks for known CAPTCHA iframes/elements and text indicators.
+    Returns a description string if CAPTCHA is detected, else None.
+    """
+    # Check DOM selectors
+    for selector in CAPTCHA_SELECTORS:
+        try:
+            el = await page.query_selector(selector)
+            if el:
+                return f"CAPTCHA element: {selector}"
+        except Exception:
+            pass
+
+    # Check text content
+    text_to_check = html if html else await page.content()
+    text_lower = text_to_check.lower()
+    for indicator in CAPTCHA_TEXT_INDICATORS:
+        if indicator.lower() in text_lower:
+            return f"CAPTCHA text: {indicator}"
+
+    return None
 
 def _record_blocked_job(state: dict, job_id: str, detail_url: str,
                         title: str, threshold: int = 20) -> bool:
@@ -222,6 +291,12 @@ async def fetch_detail_page(page, job_id: str, detail_url: str,
 
             html = await page.content()
 
+            # Check for CAPTCHA on detail page
+            captcha = await _detect_captcha(page, html)
+            if captcha:
+                _log("CAPTCHA", f"CAPTCHA detected on detail page: {captcha}")
+                return False, None
+
             blocked = any(kw in html.lower() for kw in BLOCK_KW)
             if blocked:
                 debug_path = detail_dir / f"job_{job_id}_blocked_attempt{attempt}.html"
@@ -307,6 +382,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                            resume_detail_only: bool = False,
                            total_so_far: int = 0,
                            tracker: ProxyTracker | None = None,
+                           auth_config: dict[str, Any] | None = None,
                            ) -> tuple[list[dict], int]:
     """Crawl listing pages + detail pages with full checkpointing.
 
@@ -339,6 +415,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
         browser = await launch_async(
             headless=config.headless, proxy=proxy,
             humanize=True, geoip=True, human_preset="careful",
+            backend=config.browser_backend,
         )
         context = await browser.new_context(
             viewport={"width": 1366, "height": 768},
@@ -349,17 +426,25 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
         page = await context.new_page()
 
         _log("VERIFY", f"Checking if proxy IP is {config.proxy_country.upper() if config.use_proxy else 'DIRECT'}...")
-        is_target_country, ip_addr = await verify_country_ip(page, config.proxy_country.upper() if config.use_proxy else "DIRECT")
+        is_target_country, ip_addr = await verify_country_ip(page, self.config.proxy_country.upper() if self.config.use_proxy else "DIRECT")
         if not is_target_country:
             _log("SKIP", f"IP is not {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} ({ip_addr}) — skipping this proxy")
             return [], 0
         _log("OK", f"{config.proxy_country.upper() if config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
 
+        # CAPTCHA detection at session start
+        captcha = await _detect_captcha(page)
+        if captcha:
+            _log("CAPTCHA", f"CAPTCHA detected on session start: {captcha} - skipping proxy")
+            return [], 0
+
         # Authentication layer (if required)
-        auth_config = load_auth_config()
         if auth_config and config.auth_required:
             _log("AUTH", "Target site requires authentication - logging in...")
-            await authenticate(page, auth_config)
+            login_ok = await authenticate(page, auth_config)
+            if not login_ok:
+                _log("AUTH", "Login failed - skipping this proxy")
+                return [], 0
 
         # Warm up with Google Japan
         _log("WARMUP", "Navigating to google.co.jp...")
@@ -430,9 +515,10 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                             page = await context.new_page()
                             await page.goto(listing_url,
                                             wait_until="domcontentloaded", timeout=30000)
-                            if auth_config and config.auth_required and auth_config.get("login_url") in page.url:
-                                _log("AUTH", "Session recovery: re-authenticating...")
-                                await authenticate(page, auth_config)
+                            if auth_config and config.auth_required:
+                                if not await ensure_authenticated(page, auth_config):
+                                    _log("AUTH", "Session recovery: re-authenticating...")
+                                    await authenticate(page, auth_config)
                             await asyncio.sleep(random.uniform(2.0, 4.0))
                         except Exception:
                             pass
@@ -471,10 +557,15 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
 
             _log("PAGE", f"Loading listing page {page_num}: {current_url[:70]}...")
             await page.goto(current_url, wait_until="domcontentloaded", timeout=45000)
-            if auth_config and config.auth_required and auth_config.get("login_url") and auth_config.get("login_url") in page.url:
-                _log("AUTH", "Redirected to login page - re-authenticating...")
-                await authenticate(page, auth_config)
-                await page.goto(current_url, wait_until="domcontentloaded", timeout=45000)
+            # Session health check for auth-protected sites
+            if auth_config and config.auth_required:
+                if not await ensure_authenticated(page, auth_config):
+                    _log("AUTH", "Session expired - re-authenticating...")
+                    login_ok = await authenticate(page, auth_config)
+                    if not login_ok:
+                        _log("AUTH", "Re-authentication failed - stopping this proxy")
+                        break
+                    await page.goto(current_url, wait_until="domcontentloaded", timeout=45000)
             await asyncio.sleep(random.uniform(config.delay_min, config.delay_max) *
                                 rate_limit["current_multiplier"])
             pages_visited += 1
@@ -489,6 +580,14 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                 list_html_path.write_text(html, encoding="utf-8")
             except Exception as e:
                 _log("WARN", f"Failed to save listing HTML: {e}")
+
+            # Check for CAPTCHA on listing page
+            captcha = await _detect_captcha(page, html)
+            if captcha:
+                _log("CAPTCHA", f"CAPTCHA detected on listing page {page_num}: {captcha}")
+                if tracker:
+                    tracker.record_captcha(proxy)
+                break
 
             if any(kw in html.lower() for kw in BLOCK_KW):
                 # Step up rate limit on listing block
@@ -640,6 +739,10 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                         pass
                     try:
                         page = await context.new_page()
+                        # Re-authenticate if session was lost
+                        if auth_config and config.auth_required:
+                            if not await ensure_authenticated(page, auth_config):
+                                await authenticate(page, auth_config)
                         await page.goto(current_url,
                                         wait_until="domcontentloaded", timeout=30000)
                         await asyncio.sleep(random.uniform(2.0, 4.0))
@@ -712,6 +815,8 @@ class CrawlEngine:
         self.mapping = mapping
         self.config = config
         self.tracker = tracker
+        # Load auth config once at engine init (not per-proxy session)
+        self.auth_config = load_auth_config() if config.auth_required else None
 
     async def crawl_forever(self, run_dir: Path, state: dict) -> list[dict]:
         """The main crawl loop that never stops until criteria are met."""
@@ -821,10 +926,12 @@ class CrawlEngine:
                 resume_detail_only=current_resume,
                 total_so_far=len(dedup(all_results)),
                 tracker=self.tracker,
+                auth_config=self.auth_config,
             )
 
             if items:
-                state.setdefault("used_proxies", []).append(proxy)
+                state.setdefault("used_proxies", [])
+                if proxy not in state["used_proxies"]: state["used_proxies"].append(proxy)
                 save_checkpoint(run_dir, state)
                 all_results = dedup(all_results + items)
                 _log("PROGRESS", f"Proxy #{proxy_num} done: "
@@ -833,7 +940,8 @@ class CrawlEngine:
                     _log_banner(f"TARGET REACHED — {_log_progress(len(all_results), self.config.target_jobs)}")
                     break
             elif pages_visited > 0:
-                state.setdefault("used_proxies", []).append(proxy)
+                state.setdefault("used_proxies", [])
+                if proxy not in state["used_proxies"]: state["used_proxies"].append(proxy)
                 save_checkpoint(run_dir, state)
                 _log("PROGRESS", f"Proxy #{proxy_num}: {pages_visited} pages visited (all deduped)")
             else:
@@ -1007,6 +1115,7 @@ class CrawlEngine:
                     browser = await launch_async(
                         headless=self.config.headless, proxy=proxy,
                         humanize=True, geoip=True, human_preset="careful",
+                        backend=self.config.browser_backend,
                     )
                     context = await browser.new_context(
                         viewport={"width": 1366, "height": 768},
@@ -1016,12 +1125,20 @@ class CrawlEngine:
                     page = await context.new_page()
 
                     # Verify JP IP
-                    is_target_country, ip_addr = await verify_country_ip(page, config.proxy_country.upper() if config.use_proxy else "DIRECT")
+                    is_target_country, ip_addr = await verify_country_ip(page, self.config.proxy_country.upper() if self.config.use_proxy else "DIRECT")
                     if not is_target_country:
-                        _log("SKIP", f"Retry: proxy IP is not {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} ({ip_addr})")
+                        _log("SKIP", f"Retry: proxy IP is not {self.config.proxy_country.upper() if self.config.use_proxy else 'DIRECT'} ({ip_addr})")
                         continue
 
-                    _log("OK", f"Retry: {config.proxy_country.upper() if config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
+                    _log("OK", f"Retry: {self.config.proxy_country.upper() if self.config.use_proxy else 'DIRECT'} IP confirmed: {ip_addr}")
+
+                    # Authenticate if required (retry phase)
+                    if self.auth_config and self.config.auth_required:
+                        _log("AUTH", "Retry phase: authenticating...")
+                        login_ok = await authenticate(page, self.auth_config)
+                        if not login_ok:
+                            _log("AUTH", "Retry: login failed - trying next proxy")
+                            continue
 
                     for job in jobs_to_try[:]:
                         jid = job.get("job_id")

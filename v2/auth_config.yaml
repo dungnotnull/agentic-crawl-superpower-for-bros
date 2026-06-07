@@ -32,3 +32,14 @@ logged_in_indicator: ".logout-link, .user-profile, [href*='logout']"
 
 # Delay (seconds) to wait after clicking submit for the page to load
 post_submit_wait: 5.0
+
+# Maximum login attempts before giving up (default 3, with exponential backoff)
+login_max_attempts: 3
+
+# Alternative: pre-existing session cookie (use if site uses OAuth/SSO)
+# Set auth_type to "cookie" and provide cookies to inject on each session.
+# auth_type: "form"  # "form" (default) or "cookie"
+# cookies:
+#   - name: "session_id"
+#     value: "your_session_cookie_value"
+#     domain: ".example.com"

@@ -23,11 +23,21 @@ except ImportError:
 
 
 def dedup(items: list[dict]) -> list[dict]:
-    """Remove duplicate jobs by job_id or (title, company) pair."""
+    """Remove duplicate jobs by job_id or (title, company) pair.
+
+    When duplicates exist, prefer the record with a detail_html_path
+    (i.e., successfully fetched) over one without.
+    """
     seen: dict[Any, dict] = {}
     for it in items:
         key = it.get("job_id") or (it.get("title", ""), it.get("company", ""))
-        seen[key] = it
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = it
+        else:
+            # Prefer the record that has a detail HTML path
+            if it.get("detail_html_path") and not existing.get("detail_html_path"):
+                seen[key] = it
     return list(seen.values())
 
 

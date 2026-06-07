@@ -165,6 +165,5 @@ async def process_html(html_content: str, job: dict[str, Any]) -> dict[str, Any]
 
     # Run the blocking HTTP call in a thread so we don't block the event loop
     import asyncio
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _call_llm_api, payload, cfg)
+    result = await asyncio.to_thread(_call_llm_api, payload, cfg)
     return result

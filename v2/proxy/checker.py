@@ -52,7 +52,7 @@ WORKERS      = 15
 TIMEOUT      = 10
 CACHE_TTL    = timedelta(minutes=30)
 DEFAULT_TARGET_URL = "https://www.ekaigotenshoku.com/kyujin/list?z01=1"
-DEFAULT_SUCCESS_KW = ["??", "??", "??", "???"]
+DEFAULT_SUCCESS_KW = ["求人", "介護", "給与", "募集"]
 
 
 def _country_matches(verified_country: str, target_country: str) -> bool:

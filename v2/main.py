@@ -105,6 +105,7 @@ def _parse_args() -> dict:
         "clean": False,
         "headless": True,
         "bayesian": False,
+        "backend": "playwright",
     }
     i = 0
     while i < len(args):
@@ -122,6 +123,11 @@ def _parse_args() -> dict:
             result["headless"] = False; i += 1
         elif args[i] == "--bayesian":
             result["bayesian"] = True; i += 1
+        elif args[i] == "--backend" and i + 1 < len(args):
+            val = args[i + 1].strip().lower()
+            if val in ("playwright", "patchright"):
+                result["backend"] = val
+            i += 2
         elif args[i] in ("--help", "-h"):
             _print_help(); sys.exit(0)
         else:
@@ -141,6 +147,7 @@ def _print_help() -> None:
         "  --clean             Delete previous output before starting\n"
         "  --no-headless       Run browser with visible window\n"
         "  --bayesian          Use Bayesian scoring (Beta-Binomial + latency model)\n"
+        "  --backend NAME      Browser backend: playwright (default) or patchright (for reCAPTCHA v3)\n"
         "  --help, -h          Show this help message\n\n"
         "Examples:\n"
         "  python main.py\n"
@@ -231,6 +238,7 @@ async def main() -> None:
     config.headless = args["headless"]
     if args["bayesian"]:
         config.use_bayesian_scoring = True
+    config.browser_backend = args.get("backend", "playwright")
 
     # --- Startup banner ---
     sep = "=" * 80

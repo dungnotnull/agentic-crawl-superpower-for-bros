@@ -12,6 +12,7 @@
 [![Multi-Site](https://img.shields.io/badge/Multi--Site-YAML%20Driven-9cf?style=for-the-badge)](v2/sites/)
 [![Multi-Country](https://img.shields.io/badge/Multi--Country-9%2B%20Regions-blue?style=for-the-badge)](v2/proxy/fetcher.py)
 [![LLM Ready](https://img.shields.io/badge/LLM%20Integration-Ready-purple?style=for-the-badge)](v2/llm_config.yaml)
+[![CAPTCHA Aware](https://img.shields.io/badge/CAPTCHA-Detection%20%26%20Avoidance-yellow?style=for-the-badge)](v2/crawler.py)
 
 ---
 
@@ -23,11 +24,13 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 
 > **Core guarantee: The crawl loop never stops prematurely.**
 
-- **Multi-country proxy support**: Vietnam, Japan, China, South Korea, Singapore, Russia, Europe, India, USA — or run without proxy entirely
+- **Multi-country proxy support**: Vietnam, Japan, China, South Korea, Singapore, Russia, Europe, India, USA â€” or run without proxy entirely
 - **14 free proxy providers** aggregated into one pool
 - **Crash-safe checkpointing**: resume exactly where you left off
+- **CAPTCHA detection & avoidance**: detects reCAPTCHA, hCaptcha, Cloudflare Turnstile; switches proxies automatically
+- **CloakBrowser stealth**: fingerprint randomization, humanized behavior, geoIP matching, Patchright backend for reCAPTCHA v3
 - **Optional LLM integration**: enrich every job with AI-extracted structured data (Claude, GPT, Gemini, Groq, Ollama)
-- **Optional authentication layer**: auto-login for protected sites like Shopee, LinkedIn, etc.
+- **Optional authentication layer**: auto-login with retry/backoff, session health checks, re-auth on cookie expiry
 - **Never-stop loop**: waits for proxies, retries blocked jobs, runs until your target is met
 
 ## Quick Start
@@ -51,9 +54,9 @@ When you run `python main.py`, the terminal will ask:
 
 ## Detailed Documentation
 
-- ? **v2/README.md** — Full technical documentation, architecture, configuration reference
-- ? **v2/FIRST-SIGHT-BY-HAND.md** — Step-by-step beginner guide, no coding required
-- ? **v2/PROJECT-ENHANCEMENT-SUGGESTION.md** — Roadmap and completed enhancements
+- **[v2/README.md](v2/README.md)** â€” Full technical documentation, architecture, configuration reference
+- **[v2/FIRST-SIGHT-BY-HAND.md](v2/FIRST-SIGHT-BY-HAND.md)** â€” Step-by-step beginner guide, no coding required
+- **[v2/PROJECT-ENHANCEMENT-SUGGESTION.md](v2/PROJECT-ENHANCEMENT-SUGGESTION.md)** â€” Roadmap and completed enhancements
 
 ## Key Features
 
@@ -67,6 +70,8 @@ When you run `python main.py`, the terminal will ask:
 | Block tracking & retry | Ready |
 | YAML-driven multi-site support | Ready |
 | Real-time logging & dashboard | Ready |
+| CAPTCHA detection & proxy avoidance | Ready |
+| Browser backend selection (playwright/patchright) | Ready |
 | Bayesian proxy scoring | Ready |
 | Rate limiting adaptation | Ready |
 | **LLM API integration** | Ready (opt-in via `llm_config.yaml`) |
@@ -74,7 +79,7 @@ When you run `python main.py`, the terminal will ask:
 
 ## License
 
-[MIT](LICENSE) — Use freely, modify freely, crawl freely.
+[MIT](LICENSE) â€” Use freely, modify freely, crawl freely.
 
 ---
 

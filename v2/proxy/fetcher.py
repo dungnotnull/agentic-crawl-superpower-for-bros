@@ -73,7 +73,7 @@ EU_COUNTRY_CODES = {
 # --- Site-aware target detection -----------------------------------------
 
 DEFAULT_TARGET_URL = "https://www.ekaigotenshoku.com/kyujin/list?z01=1"
-DEFAULT_SUCCESS_KW = ["??", "??", "??", "???", "??", "??", "???"]
+DEFAULT_SUCCESS_KW = ["求人", "介護", "給与", "勤務地", "施設", "募集", "正社員"]
 
 def _load_target_from_args() -> tuple[str, list[str], str, str]:
     """Parse CLI for --site, --country, or --url/--keywords overrides.

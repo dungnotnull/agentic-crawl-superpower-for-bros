@@ -46,6 +46,20 @@ The v2 codebase is a complete rewrite of v1, designed for multi-site support and
 
 12. **Latency tracking**: `fetch_detail_page()` timestamps every successful detail fetch via Welford's online algorithm (constant memory). In Bayesian mode, latency variance penalizes proxies with slow/unstable response times. In heuristic mode, latency data is collected but doesn't affect scoring.
 
+13. **CAPTCHA detection**: `_detect_captcha()` checks for reCAPTCHA, hCaptcha, Cloudflare Turnstile iframes/elements and Japanese/English CAPTCHA text indicators. When detected, the proxy session is stopped and the proxy is flagged in `ProxyTracker` with a score penalty. CAPTCHA-flagged proxies are NOT immediately retired ? they may work again after cooldown. This is independent of block detection and runs alongside it.
+
+14. **Browser backend selection**: CloakBrowser supports two Playwright backends: `playwright` (default) and `patchright`. Patchright suppresses CDP runtime signals which helps pass reCAPTCHA v3 Enterprise detection, but breaks `add_init_script()` and proxy auth. Selected via `--backend patchright` CLI flag or `CRAWL_BROWSER_BACKEND=patchright` env var.
+
+15. **Auth config loaded once**: `CrawlEngine.__init__()` loads `auth_config.yaml` once and passes it to all `crawl_with_proxy()` and `_retry_blocked_jobs()` calls. This prevents inconsistent behavior if the file is edited mid-crawl.
+
+16. **Session health checks**: Before loading each listing page on auth-required sites, `ensure_authenticated()` is called. If the session expired (cookie timeout, not just URL redirect), it re-authenticates automatically. This handles sites that silently expire sessions without redirecting to a login page.
+
+17. **CAPTCHA scoring penalty**: In `ProxyTracker`, each CAPTCHA detection reduces the proxy's score by 20% (multiplicative `0.80 ** captcha_count`). This applies in both heuristic and Bayesian modes. The tracker's `summary()` includes CAPTCHA counts when present.
+
+18. **Auth retry with backoff**: `authenticate()` in `auth_manager.py` now retries up to `login_max_attempts` (default 3) with exponential backoff (5s, 10s, 15s). Configurable in `auth_config.yaml`.
+
+19. **Session state persistence**: `auth_manager.py` provides `save_auth_state()` and `has_saved_auth_state()` helpers using Playwright's `storage_state` API. This enables cookie reuse across proxy switches for auth-required sites.
+
 ## Language
 
 All code, comments, and documentation are in **English only**. No Vietnamese text anywhere in v2.

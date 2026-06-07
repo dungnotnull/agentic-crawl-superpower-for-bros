@@ -1,6 +1,6 @@
 # First Sight by Hand
 
-Welcome! This guide walks you through crawling job listings � no coding required.
+Welcome! This guide walks you through crawling job listings — no coding required.
 
 ---
 
@@ -15,7 +15,7 @@ Welcome! This guide walks you through crawling job listings � no coding required
 
 ---
 
-## Step 1 � Install Python
+## Step 1 — Install Python
 
 Go to [python.org](https://python.org), download the latest version, and run the installer.
 
@@ -31,7 +31,7 @@ You should see something like `Python 3.11.x`.
 
 ---
 
-## Step 2 � Get the project
+## Step 2 — Get the project
 
 You already have the project folder. Open a terminal (Command Prompt, PowerShell, or Terminal) and navigate into it:
 
@@ -41,7 +41,7 @@ cd path\to\crawl-superpower-for-bros\v2
 
 ---
 
-## Step 3 � Install dependencies
+## Step 3 — Install dependencies
 
 Run this one command:
 
@@ -55,11 +55,11 @@ Then install the browser engine:
 python -m cloakbrowser install
 ```
 
-This downloads Chrome's automation driver. It only needs to be done once.
+This downloads a stealth Chromium browser with built-in fingerprint protection. It only needs to be done once.
 
 ---
 
-## Step 4 � Set up proxies (first time only)
+## Step 4 — Set up proxies (first time only)
 
 **What is this?** The tool can use IP addresses from different countries to access geo-restricted websites. This step finds free public proxies located in your target country.
 
@@ -90,7 +90,7 @@ If your target website does **not** block your IP, you can skip proxies entirely
 
 ---
 
-## Step 5 � Start crawling
+## Step 5 — Start crawling
 
 Run the main script:
 
@@ -148,8 +148,8 @@ The terminal will ask you three simple questions:
 The tool starts crawling automatically. You will see real-time progress:
 
 ```
-  00:15 [FOUND] Job #1/20: ID=299554 "????(???)"
-  00:19 [SAVED] Job 299554 "????(???)" -> 1/100 jobs (1%)
+  00:15 [FOUND] Job #1/20: ID=299554 "介護スタッフ(正社員)"
+  00:19 [SAVED] Job 299554 "介護スタッフ(正社員)" -> 1/100 jobs (1%)
 ```
 
 ### Useful command-line options
@@ -161,10 +161,11 @@ The tool starts crawling automatically. You will see real-time progress:
 | `python main.py --clean` | Delete all previous results and start fresh |
 | `python main.py --no-headless` | Show the browser window (for debugging) |
 | `python main.py --bayesian` | Use smart proxy scoring |
+| `python main.py --backend patchright` | Use Patchright browser (for sites with reCAPTCHA v3) |
 
 ---
 
-## Step 6 � Watch progress
+## Step 6 — Watch progress
 
 ### Terminal
 
@@ -178,11 +179,11 @@ While the crawl runs, open your browser and go to:
 http://localhost:3001
 ```
 
-You will see a dashboard showing crawled jobs, HTML previews, and progress stats. The dashboard starts automatically � no extra commands needed.
+You will see a dashboard showing crawled jobs, HTML previews, and progress stats. The dashboard starts automatically — no extra commands needed.
 
 ---
 
-## Step 7 � Find your results
+## Step 7 — Find your results
 
 After the crawl finishes, the results are saved in the `output/` folder:
 
@@ -204,6 +205,26 @@ Double-click `jobs.csv` or import it:
 3. Select `output/run_*/jobs.csv`
 4. Set encoding to **UTF-8**
 5. Click **Load**
+
+---
+
+## What the Tool Does About CAPTCHAs
+
+When crawling, some websites may show a CAPTCHA (a puzzle that asks "are you human?"). The tool handles this automatically:
+
+1. **The built-in stealth browser (CloakBrowser)** makes your browser look like a real person — random fingerprints, human-like mouse movements, matching timezone. This prevents many CAPTCHAs from appearing in the first place.
+
+2. **If a CAPTCHA does appear**, the tool detects it and:
+   - Stops using that proxy immediately
+   - Moves to the next available proxy
+   - Logs the event so you can see it in the terminal
+
+3. **For sites with reCAPTCHA v3** (invisible scoring), you can use the Patchright browser:
+   ```bash
+   python main.py --backend patchright
+   ```
+
+You don't need to do anything else — CAPTCHA handling is fully automatic.
 
 ---
 
@@ -231,15 +252,19 @@ If the website you want to crawl requires a login:
 1. Open `auth_config.yaml`
 2. Change `enabled: false` to `enabled: true`
 3. Fill in:
-   - `login_url` � the website's login page address
-   - `username` � your email or username
-   - `password` � your password
-   - `username_selector` � the CSS selector for the username field (use browser DevTools to find it)
-   - `password_selector` � the CSS selector for the password field
-   - `submit_selector` � the CSS selector for the login button
+   - `login_url` — the website's login page address
+   - `username` — your email or username
+   - `password` — your password
+   - `username_selector` — the CSS selector for the username field (use browser DevTools to find it)
+   - `password_selector` — the CSS selector for the password field
+   - `submit_selector` — the CSS selector for the login button
 4. Run `python main.py` and answer **Y** when asked about authentication
 
-The tool will log in automatically, and if it gets logged out during the crawl, it will log back in and keep going.
+The tool will:
+- Log in automatically (with up to 3 retry attempts if login fails)
+- Check if your session is still active before each page
+- Re-log in automatically if your session expires
+- Skip the proxy if login fails after all retries
 
 ---
 
@@ -266,11 +291,12 @@ Press **R** to continue where you left off. All progress is auto-saved after eve
 | Problem | Solution |
 |---------|----------|
 | **"No proxies available"** | Re-run `python proxy/fetcher.py --country {your_country}` |
-| **"No content at page"** | The proxies are blocked � the tool automatically switches to the next proxy. Just wait. |
+| **"No content at page"** | The proxies are blocked — the tool automatically switches to the next proxy. Just wait. |
 | **Crawl seems stuck** | It is not. When proxies run out, the tool waits 60 seconds and tries again. It will never give up. |
 | **Japanese text shows as ???** | Use **Windows Terminal** instead of Command Prompt, or type `chcp 65001` before running. |
 | **Dashboard shows nothing** | Data appears as jobs are crawled. Wait for the first few jobs to complete. |
 | **Blocked jobs** | Some jobs get blocked by the website. The tool retries 20 times, then logs them in `blocked_jobs.json`. This is normal. |
+| **[CAPTCHA] detected** | The website showed a CAPTCHA. The tool will switch to a new proxy. For v3 CAPTCHAs, try `--backend patchright`. |
 | **"Does this website require authentication?"** | Answer **N** for public sites. Answer **Y** only for sites with login walls. |
 
 ---
@@ -288,6 +314,9 @@ python main.py
 
 # Start crawling with options
 python main.py --target-jobs 240
+
+# For sites with reCAPTCHA v3
+python main.py --backend patchright --target-jobs 240
 
 # View live dashboard
 # Open: http://localhost:3001
@@ -313,6 +342,6 @@ Everything else has sensible defaults. You do not need to configure anything unl
 
 ## Need help?
 
-- `python main.py --help` � shows all available options
-- `python proxy/fetcher.py --help` � shows proxy fetching options
+- `python main.py --help` — shows all available options
+- `python proxy/fetcher.py --help` — shows proxy fetching options
 - The dashboard at `http://localhost:3001` shows real-time crawl status

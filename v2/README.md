@@ -12,6 +12,7 @@
 [![Multi-Site](https://img.shields.io/badge/Multi--Site-YAML%20Driven-9cf?style=for-the-badge)](v2/sites/)
 [![Multi-Country](https://img.shields.io/badge/Multi--Country-9%2B%20Regions-blue?style=for-the-badge)](v2/proxy/fetcher.py)
 [![LLM Ready](https://img.shields.io/badge/LLM%20Integration-Ready-purple?style=for-the-badge)](v2/llm_config.yaml)
+[![CAPTCHA Aware](https://img.shields.io/badge/CAPTCHA-Detection%20%26%20Avoidance-yellow?style=for-the-badge)](v2/crawler.py)
 
 ---
 
@@ -19,7 +20,7 @@
 
 ## What It Does
 
-Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to crawl job listing sites (or any structured data site) through **rotating country-specific proxies** with **zero manual intervention**. It runs until it meets your exact target � whether that is a specific number of jobs, a page limit, or crawling until every page is exhausted.
+Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to crawl job listing sites (or any structured data site) through **rotating country-specific proxies** with **zero manual intervention**. It runs until it meets your exact target — whether that is a specific number of jobs, a page limit, or crawling until every page is exhausted.
 
 > **Core guarantee: The crawl loop never stops prematurely.**
 > If proxies run out, it waits and keeps searching. If a job is blocked, it retries up to 20 times before moving it to a tracking file. The only way the loop exits is when your criteria are met.
@@ -36,16 +37,18 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 | **Proxy rotation** | Automatically fetches, scores, and rotates proxies; waits for new proxies if none are available |
 | **Crash-safe checkpointing** | Every detail page fetch is checkpointed; resume exactly where you left off after a crash |
 | **Block tracking** | Jobs that fail after 20+ attempts are moved to `blocked_jobs.json` for visibility |
-| **Multi-site support** | Add new sites via YAML mapping files � no code changes needed |
+| **Multi-site support** | Add new sites via YAML mapping files — no code changes needed |
 | **Dual output** | Raw HTML preserved for cross-referencing + structured JSON in `output-final-json/` |
 | **Live dashboard** | Built-in web UI to browse crawled jobs and preview saved HTML pages |
 | **Real-time logging** | Every action logged to terminal with job IDs, names, progress, and elapsed time |
-| **Anti-detection** | Uses CloakBrowser with humanized behavior, geoIP, and careful throttling |
-| **Smart proxy scheduling** | Tracks per-proxy success/failure rates; auto-retires bad proxies; scores by runtime performance |
+| **Anti-detection** | Uses CloakBrowser with humanized behavior, geoIP, fingerprint randomization, and careful throttling |
+| **CAPTCHA detection** | Detects reCAPTCHA, hCaptcha, Cloudflare Turnstile; flags proxies, adapts scoring |
+| **Browser backend choice** | `playwright` (default) or `patchright` (helps reCAPTCHA v3 Enterprise) via `--backend` |
+| **Smart proxy scheduling** | Tracks per-proxy success/failure/captcha rates; auto-retires bad proxies; scores by runtime performance |
 | **Rate limiting adaptation** | Detects blocks and automatically increases delays; recovers back to baseline on sustained success |
 | **Bayesian scoring** | Optional Beta-Binomial + latency model with UCB exploration for probabilistic proxy prediction |
 | **LLM integration** | Optional API layer that sends raw HTML to any LLM (Claude, GPT, Gemini, Groq, Ollama) for smart data enrichment |
-| **Authentication automation** | Optional login automation for protected sites; auto re-authenticates on session expiry |
+| **Authentication automation** | Login automation with retry/backoff for protected sites; session health checks; re-auth on cookie expiry |
 
 ---
 
@@ -54,17 +57,17 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 ```
 v2/
 |-- main.py              # Entry point & CLI with interactive prompts
-|-- crawler.py           # Never-stop crawl engine + real-time logging
-|-- config.py            # Configuration (env vars, CLI, defaults)
+|-- crawler.py           # Never-stop crawl engine + CAPTCHA detection + real-time logging
+|-- config.py            # Configuration (env vars, CLI, defaults, backend selection)
 |-- checkpoint.py        # Crash-safe state persistence
 |-- exporter.py          # Multi-format output (JSON, CSV, final JSON)
 |-- proxy_manager.py     # Proxy loading, validation, refresh
-|-- proxy_tracker.py     # Per-proxy scoring, auto-retirement, Bayesian model
+|-- proxy_tracker.py     # Per-proxy scoring, auto-retirement, CAPTCHA penalty, Bayesian model
 |-- site_mappings.py     # YAML-driven site configuration system
 |-- dashboard.py         # Web UI for browsing results
-|-- auth_manager.py      # Login automation for protected sites
+|-- auth_manager.py      # Login automation with retry/backoff + session state persistence
 |-- llm_integration.py   # LLM API enrichment layer
-|-- auth_config.yaml     # Template: login credentials & selectors
+|-- auth_config.yaml     # Template: login credentials, selectors, retry config
 |-- llm_config.yaml      # Template: API key, model, prompt
 |-- sites/               # Site-specific YAML mappings
 |   `-- ekaigotenshoku.yaml
@@ -78,6 +81,7 @@ v2/
         |-- metadata.json
         |-- checkpoint.json
         |-- blocked_jobs.json
+        |-- proxy_tracker.json
         |-- html/
         |   |-- detail/          # Raw detail page HTML
         |   `-- list_*.html      # Raw listing page HTML
@@ -111,7 +115,7 @@ python proxy/fetcher.py --country europe
 python proxy/fetcher.py --site ekaigotenshoku
 
 # Or specify URL + keywords manually for any site
-python proxy/fetcher.py --url "https://example.com/jobs" --keywords "??,??"
+python proxy/fetcher.py --url "https://example.com/jobs" --keywords "求人,介護"
 ```
 
 This contacts **14 free proxy providers**, downloads proxy lists for your chosen country, verifies each one against your target site, and saves working proxies to `{country}_working_proxies.json`.
@@ -157,6 +161,7 @@ python main.py --target-jobs 240
 python main.py --max-pages 10
 python main.py --site ekaigotenshoku --target-jobs 500
 python main.py --bayesian --target-jobs 500
+python main.py --backend patchright       # Use Patchright for reCAPTCHA v3 sites
 python main.py --clean
 python main.py --no-headless
 python main.py --help
@@ -174,6 +179,50 @@ python dashboard.py
 ```
 
 Opens a web UI at `http://localhost:3001` where you can browse jobs, preview HTML, and inspect crawl metadata.
+
+---
+
+## Anti-Detection & CAPTCHA Handling
+
+### CloakBrowser Stealth Layers
+
+The crawler uses [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) — a patched Chromium binary with source-level fingerprint patches:
+
+| Layer | What It Defeats |
+|-------|-----------------|
+| **Fingerprint randomization** (`--fingerprint=SEED`) | Canvas, WebGL, AudioContext, hardware concurrency, device memory, screen size, GPU renderer |
+| **Automation suppression** (strips `--enable-automation`) | `navigator.webdriver = true` leak |
+| **WebRTC IP leak protection** (`--fingerprint-webrtc-ip`) | Exposes real IP behind proxy via WebRTC |
+| **Humanized behavior** (`humanize=True, human_preset="careful"`) | Bezier mouse curves, realistic typing, smooth scrolling, CDP Isolated World |
+| **GeoIP auto-detection** (`geoip=True`) | Timezone + locale match proxy country (prevents mismatch detection) |
+| **Patchright backend** (`backend="patchright"`) | Suppresses CDP runtime signals — helps pass reCAPTCHA v3 Enterprise |
+
+### CAPTCHA Detection
+
+Even with CloakBrowser, aggressive crawling or flagged proxy IPs can trigger CAPTCHA challenges. The crawler now includes built-in CAPTCHA detection:
+
+- **reCAPTCHA v2/v3** — iframe/element detection
+- **hCaptcha** — iframe/element detection
+- **Cloudflare Turnstile** — challenge iframe detection
+- **Japanese CAPTCHA pages** — text indicators (入力確認, セキュリティ確認, etc.)
+
+**When CAPTCHA is detected:**
+1. The current proxy session is stopped immediately
+2. The proxy is flagged in `ProxyTracker` with a CAPTCHA penalty (20% score reduction per detection)
+3. The crawler moves to the next proxy automatically
+4. CAPTCHA-flagged proxies are **not** retired — they may work again after cooldown
+
+### Choosing a Browser Backend
+
+```bash
+# Default: Playwright (full feature support)
+python main.py
+
+# Patchright: for sites using reCAPTCHA v3 Enterprise scoring
+python main.py --backend patchright
+```
+
+> **Note:** Patchright suppresses CDP signals that reCAPTCHA v3 uses for bot detection. However, it breaks `add_init_script()` and proxy auth. Use only when needed.
 
 ---
 
@@ -206,45 +255,36 @@ For sites that require login (e.g., Shopee, LinkedIn):
 5. Run `python main.py` and answer **Y** to the authentication prompt
 
 The crawler will:
-- Log in automatically before crawling
-- Detect session expiry (redirects to login page)
+- Log in automatically before crawling (with retry + backoff, up to 3 attempts)
+- Check session health before each listing page load
+- Detect session expiry (silent cookie timeout, not just URL redirects)
 - Re-authenticate and resume seamlessly
+- Skip the proxy if login fails after all retries
 
----
+### Session State Persistence
 
-## Real-Time Logging
+For sites with OAuth/SSO login (LINE, Google), you can save browser state and reuse it:
 
-Every action is logged to the terminal with timestamps, job IDs, and progress:
+```python
+# After successful login:
+await save_auth_state(context, Path("auth_state.json"))
 
+# Before next proxy session:
+ctx = await launch_context_async(storage_state="auth_state.json")
 ```
-========================================================================
-  CRAWL STARTED - Ekaigo Tenshoku
-========================================================================
-  00:00 [CONFIG] Target: 0/240 jobs (0%)
-  00:00 [CONFIG] Max pages/proxy: unlimited
-  00:00 [CONFIG] Block threshold: 20 attempts
 
-========================================================================
-  PROXY #1: socks5://103.152.112.166:4145
-========================================================================
-  00:03 [BROWSER] Launching CloakBrowser (headless, humanized, geoIP)...
-  00:05 [VERIFY] Checking if proxy IP is Japanese...
-  00:07 [OK] JP IP confirmed: 103.152.112.166
-  00:08 [WARMUP] Navigating to google.co.jp...
-  00:10 [WARMUP] Browser session ready
-  00:11 [PAGE] Loading listing page 1: https://www.ekaigotenshoku.com/kyujin...
-  00:14 [EXTRACT] Extracting job cards from page 1...
-  00:15 [OK] 20 jobs found on page 1
-  00:15 [FOUND] Job #1/20: ID=299554 "????(???)"
-  00:15 [DETAIL] Fetching detail pages for 20 jobs...
-  00:16 [CRAWL] Fetching job 299554 "????(???)" (1/20 on page 1)...
-  00:19 [SAVED] Job 299554 "????(???)" -> 1/240 jobs (0%)
-  ...
-  12:30 [SAVED] Job 183692 "?????????" -> 240/240 jobs (100%)
+### Cookie-Based Auth (Alternative)
 
-========================================================================
-  TARGET REACHED - 240/240 jobs (100%)
-========================================================================
+If your site uses session cookies instead of form login:
+
+```yaml
+# auth_config.yaml
+enabled: true
+auth_type: "cookie"
+cookies:
+  - name: "session_id"
+    value: "your_cookie_value"
+    domain: ".example.com"
 ```
 
 ---
@@ -257,14 +297,15 @@ All settings can be configured via environment variables, CLI arguments, or dire
 |---------|-------------|----------|---------|-------------|
 | Target jobs | `CRAWL_TARGET_JOBS` | `--target-jobs N` | None (unlimited) | Stop after N jobs |
 | Max pages | `CRAWL_MAX_PAGES` | `--max-pages N` | None (unlimited) | Max listing pages per proxy |
-| Block threshold | `CRAWL_BLOCK_THRESHOLD` | � | 20 | Attempts before moving to block file |
+| Block threshold | `CRAWL_BLOCK_THRESHOLD` | — | 20 | Attempts before moving to block file |
 | Headless | `CRAWL_HEADLESS` | `--no-headless` | True | Run browser without UI |
-| Output dir | `CRAWL_OUTPUT_DIR` | � | `output` | Root output directory |
-| Proxy country | `CRAWL_PROXY_COUNTRY` | � | `japan` | Country code or `none` |
-| Use proxy | `CRAWL_USE_PROXY` | � | true | Set `false` to bypass proxy layer |
-| Auth required | `CRAWL_AUTH_REQUIRED` | � | false | Enable login automation |
+| Output dir | `CRAWL_OUTPUT_DIR` | — | `output` | Root output directory |
+| Proxy country | `CRAWL_PROXY_COUNTRY` | — | `japan` | Country code or `none` |
+| Use proxy | `CRAWL_USE_PROXY` | — | true | Set `false` to bypass proxy layer |
+| Auth required | `CRAWL_AUTH_REQUIRED` | — | false | Enable login automation |
+| Browser backend | `CRAWL_BROWSER_BACKEND` | `--backend` | playwright | `playwright` or `patchright` |
 | Bayesian scoring | `CRAWL_USE_BAYESIAN` | `--bayesian` | False | Beta-Binomial + latency + UCB scoring |
-| Bayesian exploration | `CRAWL_BAYESIAN_EXPLORATION` | � | 1.0 | UCB exploration bonus multiplier |
+| Bayesian exploration | `CRAWL_BAYESIAN_EXPLORATION` | — | 1.0 | UCB exploration bonus multiplier |
 
 ---
 
@@ -283,8 +324,8 @@ url:
   detail_url_pattern: "/jobs/detail/(\\d+)"
 
 success_keywords:
-  - "??"
-  - "??"
+  - "求人"
+  - "介護"
 
 fields:
   job_id:
@@ -338,7 +379,7 @@ When a job's detail page is blocked or fails to load, the crawler retries it on 
     {
       "job_id": "1836924",
       "detail_url": "https://www.ekaigotenshoku.com/kyujin/detail?id=1836924",
-      "title": "????",
+      "title": "介護スタッフ",
       "retries": 20,
       "status": "permanently_blocked"
     }
@@ -347,44 +388,6 @@ When a job's detail page is blocked or fails to load, the crawler retries it on 
   "total_blocked": 1
 }
 ```
-
----
-
-## Output Formats
-
-### Raw HTML (`html/detail/`)
-Original HTML of each job's detail page, saved as `job_{id}.html`. Useful for:
-- Re-parsing with different extraction rules
-- Cross-referencing with structured JSON
-- Debugging extraction issues
-
-### Structured JSON (`output-final-json/`)
-One JSON file per job with mapped fields. When LLM integration is enabled, an extra `llm_enhanced` field contains AI-extracted data:
-
-```json
-{
-  "job_id": "299554",
-  "title": "????(???)",
-  "company": "????????? ????",
-  "salary": "?? 180,000??220,000?",
-  "location": "??????",
-  "employment_type": "??? | ??",
-  "detail_url": "https://www.ekaigotenshoku.com/kyujin/detail?id=299554",
-  "llm_enhanced": {
-    "requirements": "?????????????",
-    "benefits": "??????????????",
-    "remote_policy": null
-  },
-  "_source_url": "https://www.ekaigotenshoku.com/kyujin/detail?id=299554",
-  "_crawled_at": "2025-01-15T10:30:00",
-  "_proxy_used": "socks5://..."
-}
-```
-
-Plus `all_jobs.json` combining all jobs into a single file.
-
-### CSV (`jobs.csv`)
-Standard tabular format for spreadsheet import.
 
 ---
 
@@ -403,15 +406,19 @@ Standard tabular format for spreadsheet import.
 |                                                                |
 |  For each proxy (best-scored first):                           |
 |    |-- Verify target-country IP                               |
+|    |-- Detect CAPTCHA (reCAPTCHA/hCaptcha/Turnstile)         |
 |    |-- [Optional] Authenticate if site requires login         |
 |    |-- Crawl listing pages                                    |
+|    |   |-- Session health check (auth required sites)       |
+|    |   |-- CAPTCHA detection on listing pages                |
 |    |-- For each job on page:                                 |
 |    |   |-- Fetch detail HTML (with latency timing)           |
+|    |   |-- CAPTCHA detection on detail pages                 |
 |    |   |-- [Optional] Send HTML to LLM for enrichment        |
 |    |   |-- Blocked? Step up delay multiplier                 |
 |    |   |-- 20+ fails? -> blocked_jobs.json                  |
 |    |   |-- Save checkpoint after each fetch                  |
-|    |-- Record session to tracker (successes/failures/blocks) |
+|    |-- Record session to tracker (successes/failures/captcha)|
 |    |-- Proxy failed too often? Auto-retire                   |
 |    |-- Next proxy                                            |
 |                                                                |
@@ -430,7 +437,7 @@ Standard tabular format for spreadsheet import.
 | Package | Version | Purpose |
 |---------|---------|---------|
 | Python | 3.10+ | Runtime |
-| CloakBrowser | >=0.5.0 | Anti-detection browser |
+| CloakBrowser | >=0.5.0 | Anti-detection stealth browser |
 | requests | >=2.28.0 | HTTP client for proxy verification |
 | PySocks | >=1.7.1 | SOCKS proxy support |
 | pyyaml | >=6.0 | YAML site mapping parser |
@@ -479,12 +486,13 @@ If the target site does not block your IP, select option `0` (No need proxy) at 
 | `ImportError: attempted relative import` | Running from wrong directory | `cd v2` then `python main.py` |
 | `No proxies available - waiting 60s` | No cached proxy file | Run `python proxy/fetcher.py --country {country}` first |
 | `CloakBrowser` or `launch_async` not found | CloakBrowser not installed | `pip install cloakbrowser[geoip]` then `python -m cloakbrowser install` |
+| `[CAPTCHA] CAPTCHA detected` | Site shows CAPTCHA challenge | Switch to next proxy; consider `--backend patchright` for v3 sites |
 
 ---
 
 ## License
 
-[MIT](LICENSE) � Use freely, modify freely, crawl freely.
+[MIT](LICENSE) — Use freely, modify freely, crawl freely.
 
 ---
 
