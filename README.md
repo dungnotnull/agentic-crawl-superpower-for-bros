@@ -1,12 +1,12 @@
 <div align="center">
 
-# ??? Crawl-Superpower-for-Bros
+# 🕷️ Crawl-Superpower-for-Bros
 
 **Modular, never-stop web crawler for any site, any country, any scale**
 
 *Built for days-long unattended runs with zero manual intervention*
 
-> ?? The active codebase is in the `v2/` folder. This README covers the full project.
+> The active codebase is in the `v2/` folder. This README covers the full project.
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
