@@ -544,6 +544,68 @@ If the target site does not block your IP, select option `0` (No need proxy) at 
 
 ---
 
+## 🚀 Quick Start for First-Time Users
+
+No coding knowledge required. Just copy-paste these commands into your terminal (PowerShell or Command Prompt) one by one.
+
+### Step 1 ? Enter the project folder
+
+```bash
+cd D:\crawl-superpower-for-bros\v2
+```
+
+### Step 2 ? Install everything (only once)
+
+```bash
+pip install -r requirements.txt
+python -m cloakbrowser install
+```
+
+### Step 3 ? Download working proxies for Japan
+
+```bash
+python proxy/fetcher.py --country japan --site ekaigotenshoku --min-good 8 --timeout-geo 10 --timeout-tgt 15
+```
+
+> ? This takes 2?5 minutes. You will see green checkmarks for working proxies.
+
+### Step 4 ? Start crawling
+
+```bash
+python main.py --site ekaigotenshoku --target-jobs 120
+```
+
+The terminal will ask you three simple questions:
+1. **Which country proxy?** ? Type `2` for Japan (or `0` for no proxy)
+2. **Does the site need login?** ? Type `N`
+3. **Clean start or Resume?** ? Type `C` for clean start
+
+Then it runs **automatically**. You can close your laptop and go to sleep ? it will keep working until all 120 jobs are done.
+
+### Step 5 ? View results in your browser (optional, separate terminal)
+
+Open a **new** terminal window and run:
+
+```bash
+cd D:\crawl-superpower-for-bros\v2
+python dashboard.py
+```
+
+Then open `http://localhost:3001` in Chrome.
+
+### Resume after a crash
+
+Run the same command again and press **`R`** when asked:
+
+```bash
+cd D:\crawl-superpower-for-bros\v2
+python main.py --site ekaigotenshoku --target-jobs 120
+```
+
+---
+
+---
+
 ## License
 
 [MIT](LICENSE) — Use freely, modify freely, crawl freely.
