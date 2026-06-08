@@ -22,6 +22,12 @@ except ImportError:
     from site_mappings import SiteMapping  # type: ignore[no-redef]
 
 
+def _normalize_job_id(val) -> str | None:
+    if val is None:
+        return None
+    return str(val).strip()
+
+
 def dedup(items: list[dict]) -> list[dict]:
     """Remove duplicate jobs by job_id or (title, company) pair.
 
@@ -30,7 +36,7 @@ def dedup(items: list[dict]) -> list[dict]:
     """
     seen: dict[Any, dict] = {}
     for it in items:
-        key = it.get("job_id") or (it.get("title", ""), it.get("company", ""))
+        key = _normalize_job_id(it.get("job_id")) or (it.get("title", ""), it.get("company", ""))
         existing = seen.get(key)
         if existing is None:
             seen[key] = it

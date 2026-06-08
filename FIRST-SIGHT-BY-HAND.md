@@ -1,4 +1,4 @@
-# First Sight by Hand
+﻿# First Sight by Hand
 
 Welcome! This guide walks you through crawling job listings — no coding required.
 
@@ -26,10 +26,16 @@ python -m cloakbrowser install
 
 ### 4. Fetch proxies (pick your country)
 ```bash
+# Recommended: fetch and verify against your target site
+python proxy/fetcher.py --country japan --site ekaigotenshoku --min-good 8 --timeout-geo 10 --timeout-tgt 15
+
+# Or just fetch for a country
 python proxy/fetcher.py --country japan
 ```
 
 Supported: `vietnam`, `japan`, `china`, `south korea`, `singapore`, `russia`, `europe`, `india`, `usa`
+
+> The fetcher auto-regenerates the cache if deleted. The crawler will also auto-fetch on first startup if no cache exists.
 
 ### 5. Start crawling
 ```bash
@@ -40,6 +46,20 @@ You will be asked:
 1. **Which country proxy?** (1-9, or 0 for no proxy)
 2. **Does the site require authentication?** (Y/N)
 3. **Clean start / Resume / Quit?** (C/R/Q — only if previous run exists)
+
+---
+
+## How the Agentic Crawl Works (Zero Manual Intervention)
+
+Once started, the crawler runs **completely unattended**:
+
+1. **Proxies die?** The crawler waits 60 seconds and auto-refetches fresh ones.
+2. **Jobs get blocked?** They are retried automatically. Every 30 successful fetches, the crawler pauses to retry blocked jobs.
+3. **Main crawl finishes?** A final infinite retry phase kicks in and loops until **all** blocked jobs are cleared.
+4. **Power goes out?** Run the same command again and press **R** to resume exactly where you left off.
+5. **Target reached?** The crawler saves results, prints a success message, and exits cleanly.
+
+You can close your laptop and go to sleep — the tool will keep working.
 
 ---
 

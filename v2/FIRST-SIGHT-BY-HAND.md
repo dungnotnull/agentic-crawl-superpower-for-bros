@@ -1,4 +1,4 @@
-# First Sight by Hand
+﻿# First Sight by Hand
 
 Welcome! This guide walks you through crawling job listings — no coding required.
 
@@ -64,6 +64,10 @@ This downloads a stealth Chromium browser with built-in fingerprint protection. 
 **What is this?** The tool can use IP addresses from different countries to access geo-restricted websites. This step finds free public proxies located in your target country.
 
 ```bash
+# Recommended: fetch and verify against the target site
+python proxy/fetcher.py --country japan --site ekaigotenshoku --min-good 8 --timeout-geo 10 --timeout-tgt 15
+
+# Or just fetch for a country
 python proxy/fetcher.py --country japan
 ```
 
@@ -87,6 +91,8 @@ Wait about 2-5 minutes. You will see it contacting different proxy providers, ve
 - `usa`
 
 If your target website does **not** block your IP, you can skip proxies entirely by selecting **"No need proxy"** in the next step.
+
+> **Proxy cache auto-regeneration:** If you delete `japan_working_proxies.json`, the crawler will automatically recreate it on first startup.
 
 ---
 
@@ -171,6 +177,15 @@ The tool starts crawling automatically. You will see real-time progress:
 
 The terminal shows real-time logs with job IDs, progress percentages, and elapsed time.
 
+You may also see these messages — they are normal and handled automatically:
+
+| Message | What it means |
+|---------|-------------|
+| `No proxies available — waiting 60s` | All proxies are dead. The tool will auto-refetch and retry. **Do not stop it.** |
+| `Mid-crawl retry triggered after 30 detail fetches` | The tool is pausing to retry previously blocked jobs. It will resume automatically. |
+| `FINAL RETRY PHASE - 5 blocked/retrying jobs to retry` | Main crawl is done. The tool is now doing a final pass to clear all blocked jobs. |
+| `All blocked jobs retried successfully` | All jobs are cleared. The tool will save results and exit. |
+
 ### Live Dashboard
 
 While the crawl runs, open your browser and go to:
@@ -194,6 +209,7 @@ output/
     jobs.csv               <- Open in Excel/Google Sheets
     output-final-json/     <- One clean JSON file per job
     html/detail/           <- Original saved web pages
+    blocked_jobs.json      <- Jobs that could not be fetched (should be empty after final retry)
 ```
 
 ### Opening in Excel
@@ -224,7 +240,7 @@ When crawling, some websites may show a CAPTCHA (a puzzle that asks "are you hum
    python main.py --backend patchright
    ```
 
-You don't need to do anything else — CAPTCHA handling is fully automatic.
+You do not need to do anything else — CAPTCHA handling is fully automatic.
 
 ---
 
@@ -290,14 +306,15 @@ Press **R** to continue where you left off. All progress is auto-saved after eve
 
 | Problem | Solution |
 |---------|----------|
-| **"No proxies available"** | Re-run `python proxy/fetcher.py --country {your_country}` |
+| **"No proxies available"** | The tool auto-refetches after 60 seconds. Just wait. Or run `python proxy/fetcher.py --country {your_country}` first. |
 | **"No content at page"** | The proxies are blocked — the tool automatically switches to the next proxy. Just wait. |
 | **Crawl seems stuck** | It is not. When proxies run out, the tool waits 60 seconds and tries again. It will never give up. |
 | **Japanese text shows as ???** | Use **Windows Terminal** instead of Command Prompt, or type `chcp 65001` before running. |
 | **Dashboard shows nothing** | Data appears as jobs are crawled. Wait for the first few jobs to complete. |
-| **Blocked jobs** | Some jobs get blocked by the website. The tool retries 20 times, then logs them in `blocked_jobs.json`. This is normal. |
+| **Blocked jobs** | Some jobs get blocked by the website. The tool retries them every 30 fetches, then clears them all in the final phase. This is normal. |
 | **[CAPTCHA] detected** | The website showed a CAPTCHA. The tool will switch to a new proxy. For v3 CAPTCHAs, try `--backend patchright`. |
 | **"Does this website require authentication?"** | Answer **N** for public sites. Answer **Y** only for sites with login walls. |
+| **Duplicate jobs in output** | Fixed in the latest version — `job_id` is normalized to string everywhere. Update to the latest code if you see this. |
 
 ---
 
@@ -307,7 +324,7 @@ Press **R** to continue where you left off. All progress is auto-saved after eve
 # One-time setup
 pip install -r requirements.txt
 python -m cloakbrowser install
-python proxy/fetcher.py --country japan
+python proxy/fetcher.py --country japan --site ekaigotenshoku --min-good 8 --timeout-geo 10 --timeout-tgt 15
 
 # Start crawling (interactive prompts)
 python main.py
@@ -345,3 +362,4 @@ Everything else has sensible defaults. You do not need to configure anything unl
 - `python main.py --help` — shows all available options
 - `python proxy/fetcher.py --help` — shows proxy fetching options
 - The dashboard at `http://localhost:3001` shows real-time crawl status
+- Check `blocked_jobs.json` after a run to see if any jobs could not be fetched

@@ -87,7 +87,7 @@ class CrawlConfig:
         self.detail_delay_min = 2.0
         self.detail_delay_max = 5.0
         self.detail_batch_size = 8
-        self.detail_batch_pause = 12.0
+        self.detail_batch_pause = 3.0
         self.max_empty = 2
         self.headless = True
         self.use_proxy = True
@@ -122,6 +122,8 @@ class CrawlConfig:
         self.browser_backend = "playwright"
         # CAPTCHA detection
         self.captcha_skip_proxy = True
+        self.retry_blocked_every_n_jobs = 30
+        self.mid_crawl_retry_attempts = 2
         # Apply overrides
         for k, v in kwargs.items():
             if hasattr(self, k):

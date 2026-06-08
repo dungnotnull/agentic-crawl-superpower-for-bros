@@ -1,4 +1,4 @@
-"""
+﻿"""
 Crawl-Superpower-for-Bros — Main entry point.
 
 Never-stop orchestrator: the loop only exits when TARGET_JOBS or MAX_PAGES
@@ -156,10 +156,7 @@ def _print_help() -> None:
         "  python main.py --bayesian --target-jobs 500\n"
     )
 
-
 # ── Clean Start / Resume ────────────────────────────────────────────────
-
-
 
 def prompt_proxy_country() -> str:
     """Ask user which country proxy to use."""
@@ -350,7 +347,7 @@ async def main() -> None:
             _safe_print(f"  [DASHBOARD] Live dashboard at http://localhost:3001")
     except Exception as e:
         _safe_print(f"  [DASHBOARD] Could not auto-start ({e}) - run 'python dashboard.py' manually")
-    _safe_print()
+    _safe_print("")
 
     # Create engine and run - THE LOOP NEVER BREAKS
     engine = CrawlEngine(mapping, config, tracker=tracker)

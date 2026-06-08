@@ -35,14 +35,22 @@ class ProxyManager:
 
     def _cache_is_stale(self, data: dict) -> bool:
         """Check if the proxy cache has exceeded its TTL.
-        Also checks if the cached target matches the current site."""
+        Respects empty_fetch cooldown — won't refetch before retry_after."""
+        if data.get("empty_fetch"):
+            retry_raw = data.get("retry_after")
+            if retry_raw:
+                try:
+                    retry_at = datetime.fromisoformat(retry_raw)
+                    if datetime.now() < retry_at:
+                        remaining = int((retry_at - datetime.now()).total_seconds() / 60)
+                        print(f"  [PROXY] Empty-fetch cooldown active ({remaining} min remaining) — skipping refetch")
+                        return False
+                    print(f"  [PROXY] Empty-fetch cooldown expired — allowing refetch")
+                except Exception:
+                    pass
         updated_raw = data.get("updated_at")
         if not updated_raw:
             return True
-        # If site-aware, check that the cache was built for this site
-        if self.site_name:
-            cached_target = data.get("target", "")
-            # Could do smarter matching here; for now just check TTL
         try:
             age = datetime.now() - datetime.fromisoformat(updated_raw)
             is_stale = age > self.config.proxy_cache_ttl
@@ -70,6 +78,25 @@ class ProxyManager:
             print(f"  [PROXY] Proxy fetch completed")
         except Exception as e:
             print(f"  [WARN] Proxy re-fetch failed: {e}")
+
+    def _is_empty_fetch_cooldown(self) -> bool:
+        """Check whether an empty-fetch cooldown is active on the cache file."""
+        working_file = self.config.proxy_working_file
+        if not working_file.exists():
+            return False
+        try:
+            data = json.loads(working_file.read_text(encoding="utf-8"))
+            if data.get("empty_fetch"):
+                retry_raw = data.get("retry_after")
+                if retry_raw:
+                    retry_at = datetime.fromisoformat(retry_raw)
+                    if datetime.now() < retry_at:
+                        remaining = int((retry_at - datetime.now()).total_seconds() / 60)
+                        print(f"  [PROXY] Empty-fetch cooldown active ({remaining} min remaining) — skipping refetch")
+                        return True
+        except Exception:
+            pass
+        return False
 
     def load_proxies(self, allow_refetch: bool = True) -> list[str]:
         """Load proxies sorted by real_score (best first).
@@ -132,13 +159,13 @@ class ProxyManager:
             except Exception as e:
                 print(f"  [WARN] Failed to read {working_file}: {e}")
 
-        if allow_refetch:
+        if allow_refetch and not self._is_empty_fetch_cooldown():
             print(f"  [PROXY] No proxy cache found - fetching fresh proxies...")
             self._refetch()
             return self.load_proxies(allow_refetch=False)
 
         if self.config.local_proxies:
-            print(f"  [PROXY] Using {len(self.config.local_proxies)} local proxy fallbacks")
+            print(f"  [PROXY] No working free proxies — using {len(self.config.local_proxies)} local proxy fallbacks")
             return self.config.local_proxies
 
         print(f"  [PROXY] No proxies available - engine will wait and retry")

@@ -25,7 +25,7 @@ def extract_job_id(detail_url: str | None) -> str | None:
     if not detail_url:
         return None
     m = re.search(r'[?&]id=(\d+)', detail_url)
-    return m.group(1) if m else None
+    return str(m.group(1)) if m else None
 
 
 def init_checkpoint(run_dir: Path, target_url: str, target_jobs: int | None,
@@ -81,16 +81,21 @@ def checkpoint_to_jobs(state: dict) -> list[dict]:
     """Flatten checkpoint pages into the job list format.
 
     Only includes jobs where detail_fetched is True.
+    Dedups by normalized job_id to avoid duplicates from
+    multiple page entries.
     """
-    out = []
+    seen: dict[str, dict] = {}
     for pg in state.get("pages", []):
         if not pg:
             continue
         for job in pg.get("jobs", []):
             if not job.get("detail_fetched"):
                 continue
-            out.append({
-                "job_id": job.get("job_id"),
+            jid = str(job.get("job_id", "")).strip() if job.get("job_id") else None
+            if not jid:
+                continue
+            item = {
+                "job_id": jid,
                 "title": job.get("title"),
                 "company": job.get("company"),
                 "salary": job.get("salary"),
@@ -104,8 +109,12 @@ def checkpoint_to_jobs(state: dict) -> list[dict]:
                 "page_html_path": pg.get("list_html_path"),
                 "crawled_at": job.get("crawled_at"),
                 "proxy_used": pg.get("proxy_used"),
-            })
-    return out
+            }
+            # Prefer the one with detail_html_path
+            existing = seen.get(jid)
+            if existing is None or (item.get("detail_html_path") and not existing.get("detail_html_path")):
+                seen[jid] = item
+    return list(seen.values())
 
 
 def find_latest_incomplete_run(output_dir: Path) -> tuple[Path, dict] | None:
@@ -129,9 +138,17 @@ def find_latest_incomplete_run(output_dir: Path) -> tuple[Path, dict] | None:
                 state = json.loads(ckpt_path.read_text(encoding="utf-8"))
                 target = state.get("target_jobs")
                 extracted = state.get("total_jobs_extracted", 0)
-                if target is not None and extracted >= target:
+
+                # Check blocked / retrying jobs ? these must be cleared too
+                blocked = state.get("blocked_jobs", [])
+                still_retrying = [b for b in blocked if b.get("status") != "permanently_blocked"]
+                has_blocked = len(still_retrying) > 0
+
+                # Even if extracted >= target, if blocked jobs remain the run is incomplete
+                if target is not None and extracted >= target and not has_blocked:
                     continue
-                has_incomplete = False
+
+                has_incomplete = has_blocked
                 for pg in state.get("pages", []):
                     if not pg:
                         continue
@@ -142,7 +159,7 @@ def find_latest_incomplete_run(output_dir: Path) -> tuple[Path, dict] | None:
                         if not job.get("detail_fetched"):
                             has_incomplete = True
                             break
-                not_done = (target is None) or (extracted < target)
+                not_done = (target is None) or (extracted < target) or has_blocked
                 if not_done or has_incomplete:
                     best = (entry, state)
                     best_ts = ts

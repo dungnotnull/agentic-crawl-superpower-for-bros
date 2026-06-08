@@ -1,11 +1,7 @@
-"""
-Proxy checker - Concurrent edition (v4 - Multi-country, Windows-safe)
-===========================================================
-Re-check cache: is proxy still country-alive, can it still reach target,
-current latency, and cache AGE. Auto-warn if cache is expired.
-"""
+﻿"""Proxy Checker v5 - Re-check cache with relaxed validation + SSL fallback."""
 
 import json
+import os
 import sys
 import time
 import requests
@@ -13,7 +9,9 @@ import concurrent.futures
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
+import urllib3
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def _print(msg: str = "", end: str = "\n", flush: bool = False) -> None:
     try:
@@ -26,18 +24,10 @@ def _print(msg: str = "", end: str = "\n", flush: bool = False) -> None:
 def _sep(char: str = "=", width: int = 60) -> str:
     return char * width
 
-# --- Country Configuration -------------------------------------------------
-
 COUNTRY_CODES = {
-    "vietnam": "VN",
-    "japan": "JP",
-    "china": "CN",
-    "south korea": "KR",
-    "singapore": "SG",
-    "russia": "RU",
-    "europe": "EU",
-    "india": "IN",
-    "usa": "US",
+    "vietnam": "VN", "japan": "JP", "china": "CN",
+    "south korea": "KR", "singapore": "SG", "russia": "RU",
+    "europe": "EU", "india": "IN", "usa": "US",
 }
 
 EU_COUNTRY_CODES = {
@@ -47,12 +37,14 @@ EU_COUNTRY_CODES = {
     "UA", "IS", "LI",
 }
 
-# --- Configuration ---
-WORKERS      = 15
+WORKERS      = min(32, max(8, (os.cpu_count() or 4) * 2))
 TIMEOUT      = 10
 CACHE_TTL    = timedelta(minutes=30)
 DEFAULT_TARGET_URL = "https://www.ekaigotenshoku.com/kyujin/list?z01=1"
-DEFAULT_SUCCESS_KW = ["求人", "介護", "給与", "募集"]
+DEFAULT_SUCCESS_KW = ["求人", "介護", "給与", "勤務地", "施設", "募集", "正社員"]
+
+IPINFO_URL = "https://ipinfo.io/json"
+IPAPI_URL = "http://ip-api.com/json/"
 
 
 def _country_matches(verified_country: str, target_country: str) -> bool:
@@ -63,8 +55,7 @@ def _country_matches(verified_country: str, target_country: str) -> bool:
     return vc == tc
 
 
-def _load_target_from_args() -> tuple[str, list[str], str, Path]:
-    """Parse CLI for --site, --country, or --url/--keywords."""
+def _load_target_from_args() -> tuple[str, list[str], str, Path, str]:
     args = sys.argv[1:]
     site_name = None
     target_url = DEFAULT_TARGET_URL
@@ -93,10 +84,11 @@ def _load_target_from_args() -> tuple[str, list[str], str, Path]:
 
     if site_name:
         try:
-            try:
-                from site_mappings import load_site_mapping
-            except ImportError:
-                from .site_mappings import load_site_mapping
+            import os
+            _v2_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if _v2_dir not in sys.path:
+                sys.path.insert(0, _v2_dir)
+            from site_mappings import load_site_mapping
             mapping = load_site_mapping(site_name)
             target_url = mapping.url.listing_url
             success_kw = mapping.success_keywords
@@ -115,36 +107,100 @@ def _load_target_from_args() -> tuple[str, list[str], str, Path]:
     return target_url, success_kw, site_name or target_url, working_file, country
 
 
+def _request_with_ssl_fallback(url: str, proxies: dict, timeout: int,
+                                headers: dict, allow_redirects: bool = False):
+    t0 = time.perf_counter()
+    used_verify_false = False
+    try:
+        r = requests.get(
+            url, proxies=proxies, timeout=timeout,
+            headers=headers, allow_redirects=allow_redirects, verify=True,
+        )
+    except requests.exceptions.SSLError:
+        r = requests.get(
+            url, proxies=proxies, timeout=timeout,
+            headers=headers, allow_redirects=allow_redirects, verify=False,
+        )
+        used_verify_false = True
+    ms = int((time.perf_counter() - t0) * 1000)
+    return r, ms, used_verify_false
+
+
 def _check_one(proxy_url: str, target_url: str, success_kw: list[str], target_country: str) -> dict:
     result = {"proxy": proxy_url, "alive": False, "country": "?",
-              "ip": "?", "ms_ip": -1, "target": False, "ms_tgt": -1}
+              "ip": "?", "ms_ip": -1, "target_ok": False, "target_reachable": False,
+              "ms_tgt": -1, "geo_verified": False, "ssl_bypass": False}
     proxies = {"http": proxy_url, "https": proxy_url}
     headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "ja,en;q=0.9"}
 
-    try:
-        t0 = time.perf_counter()
-        r = requests.get("https://ipinfo.io/json", proxies=proxies,
-                         timeout=TIMEOUT, headers=headers)
-        ms = int((time.perf_counter() - t0) * 1000)
-        data = r.json()
-        result.update(alive=True, ip=data.get("ip", "?"),
-                      country=data.get("country", "?"), ms_ip=ms)
-    except Exception as e:
-        result["error"] = str(e)[:50]
+    geo_ok = False
+    for geo_url in (IPAPI_URL, IPINFO_URL):
+        try:
+            r, ms, ssl_bypass = _request_with_ssl_fallback(
+                geo_url, proxies, TIMEOUT, headers,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                result.update(alive=True, ip=data.get("ip", "?"),
+                              country=data.get("country", "?"), ms_ip=ms,
+                              geo_verified=True)
+                if ssl_bypass:
+                    result["ssl_bypass"] = True
+                geo_ok = True
+                break
+        except Exception:
+            continue
+
+    if not geo_ok:
+        for verify in (True, False):
+            try:
+                t0 = time.perf_counter()
+                r = requests.get(
+                    target_url, proxies=proxies, timeout=TIMEOUT,
+                    headers=headers, allow_redirects=True, verify=verify,
+                )
+                ms = int((time.perf_counter() - t0) * 1000)
+                if r.status_code < 400 and len(r.text) > 100:
+                    result.update(alive=True, ms_tgt=ms, target_reachable=True,
+                                  country=target_country, geo_verified=False)
+                    if not verify:
+                        result["ssl_bypass"] = True
+                    if any(kw in r.text for kw in success_kw):
+                        result["target_ok"] = True
+                    geo_ok = True
+                    break
+            except requests.exceptions.SSLError:
+                if verify:
+                    continue
+                break
+            except Exception:
+                break
+
+    if not geo_ok:
+        result["error"] = "dead"
         return result
 
-    if not _country_matches(result["country"], target_country):
-        return result
-
-    try:
-        t0 = time.perf_counter()
-        r2 = requests.get(target_url, proxies=proxies, timeout=TIMEOUT,
-                          headers=headers, allow_redirects=True)
-        ms2 = int((time.perf_counter() - t0) * 1000)
-        ok = any(kw in r2.text for kw in success_kw) and r2.status_code < 400
-        result.update(target=ok, ms_tgt=ms2)
-    except Exception:
+    if _country_matches(result["country"], target_country):
         pass
+    else:
+        return result
+
+    if not result.get("target_reachable"):
+        try:
+            r2, ms2, ssl_bypass2 = _request_with_ssl_fallback(
+                target_url, proxies, TIMEOUT, headers,
+                allow_redirects=True,
+            )
+            result["ms_tgt"] = ms2
+            if ssl_bypass2:
+                result["ssl_bypass"] = True
+            body_len = len(r2.text)
+            if r2.status_code < 400 and body_len > 100:
+                result["target_reachable"] = True
+                if any(kw in r2.text for kw in success_kw):
+                    result["target_ok"] = True
+        except Exception:
+            pass
     return result
 
 
@@ -192,22 +248,31 @@ def run_checks(proxies: list[str], target_url: str, success_kw: list[str], targe
                 _print(f"  {idx:>3}. DEAD  {err}")
             elif not _country_matches(r["country"], target_country):
                 _print(f"  {idx:>3}. {r['proxy']:<40}  [{r['country']}] not {target_country}")
+            elif r.get("target_ok"):
+                note = " [ssl]" if r.get("ssl_bypass") else ""
+                _print(f"  {idx:>3}. {r['proxy']:<40}  {target_country} target_ok  {r['ms_tgt']}ms{note}")
+            elif r.get("target_reachable"):
+                note = " [ssl]" if r.get("ssl_bypass") else ""
+                _print(f"  {idx:>3}. {r['proxy']:<40}  {target_country} reachable  {r['ms_tgt']}ms{note}")
             else:
-                tgt = "site:OK" if r["target"] else "site:?"
-                ms2 = f"{r['ms_tgt']}ms" if r["ms_tgt"] > 0 else "---"
-                _print(f"  {idx:>3}. {r['proxy']:<40}  {target_country} {tgt}  {ms2}")
+                note = " [ssl]" if r.get("ssl_bypass") else ""
+                _print(f"  {idx:>3}. {r['proxy']:<40}  {target_country} geo-only   {r['ms_ip']}ms{note}")
     return results
 
 
 def print_summary(results: list[dict], updated: datetime | None, target_country: str) -> None:
-    ok    = [r for r in results if _country_matches(r.get("country", ""), target_country) and r.get("target")]
+    ok    = [r for r in results if _country_matches(r.get("country", ""), target_country) and r.get("target_ok")]
+    reachable = [r for r in results if _country_matches(r.get("country", ""), target_country) and r.get("target_reachable") and not r.get("target_ok")]
     alive = [r for r in results if _country_matches(r.get("country", ""), target_country)]
     dead  = [r for r in results if not r.get("alive")]
+    unverified = [r for r in results if r.get("alive") and not r.get("geo_verified") and _country_matches(r.get("country", ""), target_country)]
 
     _print(f"\n{_sep()}")
     _print(f"  Results:")
-    _print(f"     {target_country} + can access site : {len(ok)}")
+    _print(f"     {target_country} + target_ok      : {len(ok)}")
+    _print(f"     {target_country} + reachable    : {len(reachable)}")
     _print(f"     {target_country} (correct IP)      : {len(alive)}")
+    _print(f"     Geo-unverified (alive) : {len(unverified)}")
     _print(f"     Dead / timeout       : {len(dead)}")
 
     if ok:
@@ -217,7 +282,7 @@ def print_summary(results: list[dict], updated: datetime | None, target_country:
     if not alive:
         _print(f"\n  [ERROR] No working {target_country} proxies!")
         _print(f"  -> Run: python proxy/fetcher.py --country {target_country.lower()}")
-    elif not ok:
+    elif not ok and not reachable:
         _print(f"\n  [WARN] {target_country} IP exists but site error - possibly temporary rate-limit")
     else:
         _print(f"\n  Ready to crawl: python main.py")
@@ -239,7 +304,7 @@ if __name__ == "__main__":
     target_url, success_kw, label, working_file, country = _load_target_from_args()
 
     _print(f"{_sep()}")
-    _print(f"  Proxy Checker v4 - {datetime.now():%Y-%m-%d %H:%M}")
+    _print(f"  Proxy Checker v5 - {datetime.now():%Y-%m-%d %H:%M}")
     _print(f"  Target: {label}")
     _print(f"  Country: {country}")
     _print(f"{_sep()}\n")

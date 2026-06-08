@@ -114,7 +114,7 @@ def _log_progress(current: int, target: int | None, label: str = "jobs") -> str:
 
 BLOCK_KW = [
     "access denied", "forbidden", "403 error", "request blocked",
-    "could not be satisfied",
+    "your request could not be satisfied",
     "アクセス制限", "地域制限", "ご利用いただけません",
 ]
 
@@ -176,12 +176,13 @@ async def _detect_captcha(page, html: str | None = None) -> str | None:
 
     return None
 
-def _record_blocked_job(state: dict, job_id: str, detail_url: str,
+def _record_blocked_job(state: dict, job_id: str | int, detail_url: str,
                         title: str, threshold: int = 20) -> bool:
     """Record a blocked/failed job. Returns True if threshold exceeded."""
+    job_id = str(job_id).strip()
     blocked = state.setdefault("blocked_jobs", [])
     for b in blocked:
-        if b.get("job_id") == job_id:
+        if str(b.get("job_id", "")).strip() == job_id:
             b["retries"] = b.get("retries", 0) + 1
             b["last_attempt"] = datetime.now().isoformat()
             if b["retries"] >= threshold:
@@ -226,27 +227,54 @@ def _save_block_file(run_dir: Path, state: dict) -> None:
 # ── Browser helpers ───────────────────────────────────────────────────────
 
 async def verify_country_ip(page, country_code: str = "JP") -> tuple[bool, str]:
-    """Verify that the proxy IP matches the target country."""
+    """Verify that the proxy IP matches the target country.
+
+    Only rejects if we POSITIVELY confirm wrong country. Timeouts and errors
+    pass through (the fetcher already verified country via HTTP).
+    """
     if country_code.upper() == "DIRECT" or not country_code:
         return True, "direct"
+    COUNTRY_ISO = {
+        "JAPAN": "JP", "VIETNAM": "VN", "CHINA": "CN", "SOUTH KOREA": "KR",
+        "SINGAPORE": "SG", "RUSSIA": "RU", "EUROPE": "EU", "INDIA": "IN", "USA": "US",
+    }
+    cc = COUNTRY_ISO.get(country_code.upper(), country_code.upper())
     try:
-        await page.goto("https://ipinfo.io/json",
-                        wait_until="domcontentloaded", timeout=12000)
+        await page.goto("https://httpbin.org/ip",
+                        wait_until="domcontentloaded", timeout=15000)
         content = await page.content()
-        cc = country_code.upper()
+        # httpbin.org/ip returns {"origin": "x.x.x.x"} — use ip-api for country
+        m_ip = re.search(r'"origin"\s*:\s*"([^"]+)"', content)
+        ip_str = m_ip.group(1) if m_ip else None
+    except Exception:
+        # Timeout/error — proxy is slow but not proven wrong. Let it pass.
+        return True, "timeout-pass"
+
+    if not ip_str:
+        return True, "timeout-pass"
+
+    try:
+        await page.goto(f"https://ip-api.com/json/{ip_str}?fields=countryCode",
+                        wait_until="domcontentloaded", timeout=10000)
+        content2 = await page.content()
+        m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', content2)
+        verified_cc = m.group(1) if m else None
+    except Exception:
+        # Can't determine country — let it pass
+        return True, ip_str
+
+    if verified_cc:
         if cc == "EU":
             eu_codes = {"AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR",
                         "DE","GR","HU","IE","IT","LV","LT","LU","MT","NL",
                         "PL","PT","RO","SK","SI","ES","SE","GB","NO","CH",
                         "UA","IS","LI"}
-            m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', content)
-            is_match = m and m.group(1) in eu_codes
-        else:
-            is_match = f'"{cc}"' in content or f'"country":"{cc}"' in content
-        m = re.search(r'"ip"\s*:\s*"([^"]+)"', content)
-        return is_match, (m.group(1) if m else "unknown")
-    except Exception:
-        return False, "unknown"
+            if verified_cc not in eu_codes:
+                return False, ip_str
+        elif verified_cc != cc:
+            return False, ip_str
+
+    return True, ip_str
 async def extract_jobs_with_mapping(page, page_num: int, proxy: str,
                                     mapping: SiteMapping) -> list[dict]:
     """Extract job cards using the site mapping's JS extraction code."""
@@ -255,6 +283,9 @@ async def extract_jobs_with_mapping(page, page_num: int, proxy: str,
         it["page"] = page_num
         it["crawled_at"] = datetime.now().isoformat()
         it["proxy_used"] = proxy
+        # Normalize job_id to string to prevent dedup mismatches
+        if it.get("job_id") is not None:
+            it["job_id"] = str(it["job_id"]).strip()
     return items
 
 
@@ -360,6 +391,10 @@ async def fetch_detail_page(page, job_id: str, detail_url: str,
             return True, f"html/detail/{html_filename}"
 
         except Exception as e:
+            # Don't retry on connection errors — proxy is likely dead
+            if "ERR_TIMED_OUT" in str(e) or "ERR_CONNECTION" in str(e) or "ERR_PROXY" in str(e):
+                _log("DEAD", f"Job {job_id} {type(e).__name__} — proxy appears dead, not retrying")
+                return False, None
             if attempt < max_retries:
                 backoff = 4 * (2 ** attempt)
                 _log("WARN", f"Job {job_id} {type(e).__name__} ({e}), "
@@ -383,7 +418,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                            total_so_far: int = 0,
                            tracker: ProxyTracker | None = None,
                            auth_config: dict[str, Any] | None = None,
-                           ) -> tuple[list[dict], int]:
+                           ) -> tuple[list[dict], int, int]:
     """Crawl listing pages + detail pages with full checkpointing.
 
     Returns (new_items, pages_visited).
@@ -430,14 +465,14 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
         is_target_country, ip_addr = await verify_country_ip(page, country_code)
         if not is_target_country:
             _log("SKIP", f"IP is not {country_code} ({ip_addr}) — skipping this proxy")
-            return [], 0
+            return [], 0, 0
         _log("OK", f"{country_code} IP confirmed: {ip_addr}")
 
         # CAPTCHA detection at session start
         captcha = await _detect_captcha(page)
         if captcha:
             _log("CAPTCHA", f"CAPTCHA detected on session start: {captcha} - skipping proxy")
-            return [], 0
+            return [], 0, 0
 
         # Authentication layer (if required)
         if auth_config and config.auth_required:
@@ -445,7 +480,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
             login_ok = await authenticate(page, auth_config)
             if not login_ok:
                 _log("AUTH", "Login failed - skipping this proxy")
-                return [], 0
+                return [], 0, 0
 
         # Warm up with Google Japan
         _log("WARMUP", "Navigating to google.co.jp...")
@@ -605,7 +640,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
             if not any(kw in html for kw in mapping.success_keywords):
                 _log("WARN", f"No JP content at page {page_num}")
                 if page_num == start_page:
-                    return [], pages_visited
+                    return [], pages_visited, 0
                 empty_streak += 1
                 if empty_streak >= config.max_empty:
                     _log("EMPTY", f"{empty_streak} consecutive empty pages — stopping")
@@ -680,6 +715,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
             # Fetch detail pages
             _log("DETAIL", f"Fetching detail pages for {len(pg_entry['jobs'])} jobs...")
             detail_count_in_batch = 0
+            consecutive_timeouts = 0
             for job_idx, job in enumerate(pg_entry["jobs"], 1):
                 jid = job.get("job_id")
                 durl = job.get("detail_url")
@@ -701,6 +737,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                 save_checkpoint(run_dir, state)
 
                 if success:
+                    consecutive_timeouts = 0
                     new_items.append({
                         "job_id": jid, "title": job.get("title"),
                         "company": job.get("company"), "salary": job.get("salary"),
@@ -724,6 +761,7 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                 else:
                     fetches_failed += 1
                     blocks_detected += 1
+                    consecutive_timeouts += 1
                     exceeded = _record_blocked_job(
                         state, jid, durl, job.get("title", ""),
                         threshold=config.block_threshold)
@@ -749,6 +787,11 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                         await asyncio.sleep(random.uniform(2.0, 4.0))
                     except Exception:
                         pass
+
+            # If broke out due to dead proxy, skip to next page tracking
+            if consecutive_timeouts >= 3:
+                _log("DEAD", "Proxy confirmed dead — returning partial results")
+                break
 
             pg_entry["status"] = "complete"
             save_checkpoint(run_dir, state)
@@ -785,14 +828,14 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                  f"{rate_limit['current_multiplier']}x "
                  f"({rate_limit['detections_this_session']} detections)")
 
-        return new_items, pages_visited
+        return new_items, pages_visited, fetches_done
 
     except Exception as e:
         _log("ERROR", f"{type(e).__name__}: {e}")
         # Report failure to tracker
         if tracker:
             tracker.record_failure(proxy)
-        return new_items, pages_visited
+        return new_items, pages_visited, fetches_done
     finally:
         if browser:
             _log("BROWSER", "Closing browser session...")
@@ -825,6 +868,7 @@ class CrawlEngine:
         _log_start_time = time.time()
 
         all_results: list[dict] = checkpoint_to_jobs(state)
+        details_since_last_retry = 0
         resume_detail_only = False
         proxy_start_idx = 0
 
@@ -870,7 +914,9 @@ class CrawlEngine:
         # ── THE NEVER-STOP LOOP ──
         proxy_rotation = proxy_start_idx
         pages_exhausted = False
+        consecutive_failed_rotations = 0
         rotation_count = 0
+        total_pages_visited = 0
 
         while True:
             # Check stop criteria
@@ -920,7 +966,7 @@ class CrawlEngine:
                         current_start = last.get("page_num", 0) + 1
                         current_resume = False
 
-            items, pages_visited = await crawl_with_proxy(
+            items, pages_visited, details_fetched = await crawl_with_proxy(
                 proxy, needed, run_dir, proxy_num, state,
                 self.mapping, self.config,
                 start_page=current_start,
@@ -930,6 +976,7 @@ class CrawlEngine:
                 auth_config=self.auth_config,
             )
 
+            total_pages_visited += pages_visited
             if items:
                 state.setdefault("used_proxies", [])
                 if proxy not in state["used_proxies"]: state["used_proxies"].append(proxy)
@@ -949,6 +996,18 @@ class CrawlEngine:
                 wait = random.uniform(4, 9)
                 _log("WAIT", f"Proxy #{proxy_num} failed — next proxy in {wait:.1f}s...")
                 await asyncio.sleep(wait)
+
+
+            # ---- Mid-crawl blocked-job retry ----
+            details_since_last_retry += details_fetched
+            if details_since_last_retry >= self.config.retry_blocked_every_n_jobs:
+                _log("RETRY", f"Mid-crawl retry triggered after {details_since_last_retry} detail fetches")
+                all_results = await self._retry_blocked_jobs(
+                    run_dir, state, all_results,
+                    max_attempts_per_job=self.config.mid_crawl_retry_attempts,
+                    is_final_phase=False)
+                details_since_last_retry = 0
+                consecutive_failed_rotations = 0
 
             # Persist tracker state after each proxy session
             if self.tracker:
@@ -986,17 +1045,36 @@ class CrawlEngine:
                 if not hasattr(self, '_last_rotation_count'):
                     self._last_rotation_count = current_count
                 elif current_count == self._last_rotation_count:
-                    if self.config.target_jobs is None and self.config.max_pages is None:
-                        pages_exhausted = True
+                    consecutive_failed_rotations += 1
+                    if consecutive_failed_rotations >= 3:
+                        # Require 3 consecutive failed rotations before giving up.
+                        # Only set pages_exhausted if we actually visited pages
+                        # (meaning the site truly has no more data).
+                        # If proxies fail before reaching any page (e.g. bad country IP),
+                        # refresh proxies and keep trying.
+                        if self.config.target_jobs is None and self.config.max_pages is None:
+                            if total_pages_visited > 0:
+                                pages_exhausted = True
+                            else:
+                                _log("REFRESH", "All proxies failed before reaching any page — refreshing proxies...")
+                                self._refresh_proxies()
+                        else:
+                            _log("REFRESH", "No progress after 3+ full proxy rotations — "
+                                 "refreshing proxies...")
+                            self._refresh_proxies()
                     else:
-                        _log("REFRESH", "No progress in full proxy rotation — "
+                        _log("REFRESH", f"No progress in rotation {consecutive_failed_rotations}/3 — "
                              "refreshing proxies...")
                         self._refresh_proxies()
+                else:
+                    consecutive_failed_rotations = 0
                 self._last_rotation_count = current_count
 
         # --- Blocked job retry phase ---
         all_results = await self._retry_blocked_jobs(
-            run_dir, state, all_results)
+            run_dir, state, all_results,
+            max_attempts_per_job=None,
+            is_final_phase=True)
 
         # --- Save final results ---
         _log("SAVE", "Saving final results...")
@@ -1009,26 +1087,31 @@ class CrawlEngine:
         return all_results
 
     async def _retry_blocked_jobs(self, run_dir: Path, state: dict,
-                                    all_results: list[dict]) -> list[dict]:
-        """After the main crawl, loop through blocked/retrying jobs
-        and attempt to fetch them with fresh proxies.
+                                    all_results: list[dict],
+                                    max_attempts_per_job: int | None = None,
+                                    is_final_phase: bool = False) -> list[dict]:
+        """Retry blocked/retrying jobs with fresh proxies.
 
-        Each blocked job gets one attempt per proxy until it succeeds
-        or reaches the block threshold.
+        Args:
+            max_attempts_per_job: If set, each job is attempted at most this many
+                times in this retry call (e.g. 2 for mid-crawl rounds).
+            is_final_phase: If True, loops until all_to_retry is empty and never
+                marks jobs as permanently_blocked.
         """
         blocked = state.get("blocked_jobs", [])
         retrying = [b for b in blocked if b.get("status") != "permanently_blocked"]
         permanent = [b for b in blocked if b.get("status") == "permanently_blocked"]
 
         if not retrying:
-            if permanent:
+            if permanent and not is_final_phase:
                 _log("BLOCK", f"{len(permanent)} permanently blocked jobs - "
                      f"see blocked_jobs.json")
             return all_results
 
-        _log_banner(f"RETRY PHASE - {len(retrying)} blocked/retrying jobs to retry")
+        phase_label = "FINAL RETRY PHASE" if is_final_phase else "RETRY PHASE"
+        _log_banner(f"{phase_label} - {len(retrying)} blocked/retrying jobs to retry")
         for b in retrying:
-            _log("RETRY", f"Job {b['job_id']} \"{b.get('title','?')[:40]}\" "
+            _log("RETRY", f"Job {b['job_id']} '{b.get('title','?')[:40]}' "
                  f"({b['retries']}/{self.config.block_threshold} attempts)")
 
         # Find all unfetched jobs from checkpoint pages too
@@ -1038,9 +1121,8 @@ class CrawlEngine:
                 continue
             for job in pg.get("jobs", []):
                 if not job.get("detail_fetched"):
-                    # Check if already in blocked list
                     jid = job.get("job_id")
-                    already_blocked = any(b["job_id"] == jid for b in blocked)
+                    already_blocked = any(str(b.get("job_id", "")).strip() == jid for b in blocked)
                     if not already_blocked:
                         unfetched_from_pages.append(job)
 
@@ -1048,19 +1130,18 @@ class CrawlEngine:
             _log("RETRY", f"Found {len(unfetched_from_pages)} additional unfetched jobs "
                  f"in checkpoint pages")
             for j in unfetched_from_pages:
-                _log("RETRY", f"  Job {j['job_id']} \"{j.get('title','?')[:40]}\" "
+                _log("RETRY", f"  Job {j['job_id']} '{j.get('title','?')[:40]}' "
                      f"from page {j.get('page','?')}")
 
         # Build master list of jobs to retry
         all_to_retry = []
         for b in retrying:
-            # Find the original job entry in pages
             original_job = None
             for pg in state.get("pages", []):
                 if not pg:
                     continue
                 for job in pg.get("jobs", []):
-                    if job.get("job_id") == b["job_id"]:
+                    if str(job.get("job_id", "")).strip() == str(b.get("job_id", "")).strip():
                         original_job = job
                         break
                 if original_job:
@@ -1069,7 +1150,6 @@ class CrawlEngine:
             if original_job:
                 all_to_retry.append(original_job)
             else:
-                # Blocked from checkpoint only - build minimal entry
                 all_to_retry.append({
                     "job_id": b["job_id"],
                     "title": b.get("title"),
@@ -1079,10 +1159,17 @@ class CrawlEngine:
                     "retries": b.get("retries", 0),
                 })
 
-        # Add unfetched from pages
         for job in unfetched_from_pages:
             if job not in all_to_retry:
                 all_to_retry.append(job)
+
+        # Deduplicate retry list by normalized job_id
+        retry_seen: dict[str, dict] = {}
+        for job in all_to_retry:
+            jid = str(job.get("job_id", "")).strip() if job.get("job_id") else None
+            if jid and jid not in retry_seen:
+                retry_seen[jid] = job
+        all_to_retry = list(retry_seen.values())
 
         if not all_to_retry:
             return all_results
@@ -1090,15 +1177,20 @@ class CrawlEngine:
         detail_dir = run_dir / "html" / "detail"
         detail_dir.mkdir(parents=True, exist_ok=True)
 
-        # Retry with each proxy, one job at a time
-        max_retry_rounds = min(len(all_to_retry) * 3, 60)
-        round_num = 0
+        # Track per-job attempts in THIS retry call
+        call_attempts: dict[str, int] = {j["job_id"]: 0 for j in all_to_retry}
 
-        while all_to_retry and round_num < max_retry_rounds:
+        round_num = 0
+        while all_to_retry:
             round_num += 1
-            proxies = self._load_proxies()
+            try:
+                proxies = self._load_proxies()
+            except Exception as e:
+                _log("WARN", f"Proxy load error in retry: {type(e).__name__}: {e}")
+                proxies = []
             if not proxies:
-                _log("WAIT", f"Retry round {round_num}: no proxies - waiting 60s...")
+                wait_msg = "Final retry: no proxies - waiting 60s..." if is_final_phase else f"Retry round {round_num}: no proxies - waiting 60s..."
+                _log("WAIT", wait_msg)
                 await asyncio.sleep(60)
                 continue
 
@@ -1133,7 +1225,6 @@ class CrawlEngine:
 
                     _log("OK", f"Retry: {retry_country_code} IP confirmed: {ip_addr}")
 
-                    # Authenticate if required (retry phase)
                     if self.auth_config and self.config.auth_required:
                         _log("AUTH", "Retry phase: authenticating...")
                         login_ok = await authenticate(page, self.auth_config)
@@ -1142,35 +1233,40 @@ class CrawlEngine:
                             continue
 
                     for job in jobs_to_try[:]:
-                        jid = job.get("job_id")
+                        jid = str(job.get("job_id", "")).strip() if job.get("job_id") else None
                         durl = job.get("detail_url")
                         title = job.get("title", "?")[:40]
                         if not durl:
                             all_to_retry.remove(job)
                             continue
 
-                        # Increment retry count
+                        # Enforce per-call attempt limit
+                        call_attempts[jid] = call_attempts.get(jid, 0) + 1
+                        if max_attempts_per_job and call_attempts[jid] > max_attempts_per_job:
+                            continue
+
+                        # Total lifetime retries
                         retries = job.get("retries", 0) + 1
                         job["retries"] = retries
 
-                        if retries >= self.config.block_threshold:
-                            # Permanently blocked - update blocked_jobs list
-                            _record_blocked_job(
-                                state, jid, durl, title,
-                                threshold=self.config.block_threshold)
-                            # Force status to permanent
+                        # In final phase, never mark permanently blocked
+                        effective_threshold = 999999 if is_final_phase else self.config.block_threshold
+                        if retries >= effective_threshold:
+                            _record_blocked_job(state, jid, durl, title, threshold=effective_threshold)
                             for b in state.get("blocked_jobs", []):
-                                if b.get("job_id") == jid:
+                                if str(b.get("job_id", "")).strip() == jid:
                                     b["retries"] = retries
-                                    b["status"] = "permanently_blocked"
-                            _log("BLOCK", f"Job {jid} \"{title}\" -> "
-                                 f"PERMANENTLY BLOCKED ({retries} attempts)")
-                            _save_block_file(run_dir, state)
-                            save_checkpoint(run_dir, state)
-                            all_to_retry.remove(job)
+                                    if not is_final_phase:
+                                        b["status"] = "permanently_blocked"
+                            if not is_final_phase:
+                                _log("BLOCK", f"Job {jid} '{title}' -> "
+                                     f"PERMANENTLY BLOCKED ({retries} attempts)")
+                                _save_block_file(run_dir, state)
+                                save_checkpoint(run_dir, state)
+                                all_to_retry.remove(job)
                             continue
 
-                        _log("CRAWL", f"Retry job {jid} \"{title}\" "
+                        _log("CRAWL", f"Retry job {jid} '{title}' "
                              f"(attempt {retries}/{self.config.block_threshold})...")
 
                         retry_rate_limit = {
@@ -1183,14 +1279,14 @@ class CrawlEngine:
                             rate_limit=retry_rate_limit)
 
                         if success:
-                            # Find the page this job belongs to
+                            # Update page job entries
                             listing_url = ""
                             rel_list_path = ""
                             for pg in state.get("pages", []):
                                 if not pg:
                                     continue
                                 for j in pg.get("jobs", []):
-                                    if j.get("job_id") == jid:
+                                    if str(j.get("job_id", "")).strip() == jid:
                                         j["detail_fetched"] = True
                                         j["detail_html"] = detail_path
                                         j["retries"] = retries
@@ -1201,10 +1297,9 @@ class CrawlEngine:
                             # Remove from blocked list
                             state["blocked_jobs"] = [
                                 b for b in state.get("blocked_jobs", [])
-                                if b.get("job_id") != jid
+                                if str(b.get("job_id", "")).strip() != jid
                             ]
 
-                            # Add to results
                             new_item = {
                                 "job_id": jid,
                                 "title": job.get("title"),
@@ -1222,52 +1317,47 @@ class CrawlEngine:
                             all_results = dedup(all_results + [new_item])
                             state["total_jobs_extracted"] += 1
                             save_checkpoint(run_dir, state)
-                            _log("SAVED", f"Retry: Job {jid} \"{title}\" -> "
+                            _log("SAVED", f"Retry: Job {jid} '{title}' -> "
                                  f"{_log_progress(len(all_results), self.config.target_jobs)}")
                             all_to_retry.remove(job)
 
-                            # Report retry success to tracker
                             if self.tracker:
                                 self.tracker.record_success(proxy)
 
-                            # Update blocked job entry in state for the retried job from pages
                             for pg in state.get("pages", []):
                                 if not pg:
                                     continue
                                 for j in pg.get("jobs", []):
-                                    if j.get("job_id") == jid:
+                                    if str(j.get("job_id", "")).strip() == jid:
                                         j["detail_fetched"] = True
                                         j["detail_html"] = detail_path
                                         j["retries"] = retries
 
                         else:
-                            # Still blocked/failed
                             if self.tracker:
                                 self.tracker.record_failure(proxy)
-                            _record_blocked_job(
-                                state, jid, durl, title,
-                                threshold=self.config.block_threshold)
+                            _record_blocked_job(state, jid, durl, title,
+                                                threshold=effective_threshold)
                             job["retries"] = retries
                             save_checkpoint(run_dir, state)
                             _save_block_file(run_dir, state)
 
-                            # Check if now permanent
                             for b in state.get("blocked_jobs", []):
-                                if b.get("job_id") == jid:
-                                    if b.get("retries", 0) >= self.config.block_threshold:
-                                        b["status"] = "permanently_blocked"
-                                        _log("BLOCK", f"Job {jid} \"{title}\" -> "
-                                             f"PERMANENTLY BLOCKED ({b['retries']} attempts)")
-                                        all_to_retry.remove(job)
-                                        # Also mark unfetched in pages
+                                if str(b.get("job_id", "")).strip() == jid:
+                                    if b.get("retries", 0) >= effective_threshold:
+                                        if not is_final_phase:
+                                            b["status"] = "permanently_blocked"
+                                            _log("BLOCK", f"Job {jid} '{title}' -> "
+                                                 f"PERMANENTLY BLOCKED ({b['retries']} attempts)")
+                                            all_to_retry.remove(job)
+                                        # Update page entries
                                         for pg in state.get("pages", []):
                                             if not pg:
                                                 continue
                                             for j in pg.get("jobs", []):
-                                                if j.get("job_id") == jid:
+                                                if str(j.get("job_id", "")).strip() == jid:
                                                     j["retries"] = b["retries"]
 
-                        # Brief delay between detail requests
                         await asyncio.sleep(random.uniform(
                             self.config.detail_delay_min,
                             self.config.detail_delay_max))
@@ -1283,21 +1373,17 @@ class CrawlEngine:
 
                 if not all_to_retry:
                     break
-
-                # Swap proxy
                 await asyncio.sleep(random.uniform(3, 7))
 
         remaining = len(all_to_retry)
         if remaining:
-            _log("BLOCK", f"Retry phase complete: {remaining} jobs still blocked "
-                 f"(max rounds reached)")
+            _log("BLOCK", f"Retry phase complete: {remaining} jobs still blocked")
         else:
             _log("OK", "All blocked jobs retried successfully")
 
-        # Save updated block file
         _save_block_file(run_dir, state)
-
         return all_results
+
 
     def _load_proxies(self) -> list[str]:
         """Load proxies from cache, with auto-refetch if stale."""
@@ -1305,7 +1391,7 @@ class CrawlEngine:
             from .proxy_manager import ProxyManager
         except ImportError:
             from proxy_manager import ProxyManager  # type: ignore[no-redef]
-        pm = ProxyManager(self.config, tracker=self.tracker)
+        pm = ProxyManager(self.config, site_name=self.mapping.name, tracker=self.tracker)
         return pm.load_proxies()
 
     def _refresh_proxies(self) -> None:
@@ -1314,5 +1400,5 @@ class CrawlEngine:
             from .proxy_manager import ProxyManager
         except ImportError:
             from proxy_manager import ProxyManager  # type: ignore[no-redef]
-        pm = ProxyManager(self.config)
+        pm = ProxyManager(self.config, site_name=self.mapping.name)
         pm.refetch()

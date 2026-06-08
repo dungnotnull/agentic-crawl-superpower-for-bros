@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # Crawl-Superpower-for-Bros
 
@@ -23,7 +23,7 @@
 Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to crawl job listing sites (or any structured data site) through **rotating country-specific proxies** with **zero manual intervention**. It runs until it meets your exact target — whether that is a specific number of jobs, a page limit, or crawling until every page is exhausted.
 
 > **Core guarantee: The crawl loop never stops prematurely.**
-> If proxies run out, it waits and keeps searching. If a job is blocked, it retries up to 20 times before moving it to a tracking file. The only way the loop exits is when your criteria are met.
+> If proxies run out, it waits and keeps searching. If a job is blocked, it retries up to 20 times before moving it to a tracking file. After the main crawl ends, a **final infinite retry phase** loops until *all* blocked jobs are cleared. The only way the loop exits is when your criteria are met and **no blocked jobs remain**.
 
 ---
 
@@ -32,11 +32,13 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 | Feature | Description |
 |---------|-------------|
 | **Never-stop loop** | Crawl runs continuously until `TARGET_JOBS` or `MAX_PAGES` is reached, or all pages are exhausted |
-| **14 proxy providers** | Aggregates from Proxifly, ProxyScrape, GeoNode, Monosans, SpeedX, ClarkEtM, and more |
+| **14+ proxy providers** | Aggregates from Proxifly, ProxyScrape, GeoNode, proxy-list.download, ProxyNova, Spys.one, free-proxy.cz, Databay, and more |
 | **Multi-country proxies** | Choose from Vietnam, Japan, China, South Korea, Singapore, Russia, Europe, India, USA, or run without proxy |
 | **Proxy rotation** | Automatically fetches, scores, and rotates proxies; waits for new proxies if none are available |
 | **Crash-safe checkpointing** | Every detail page fetch is checkpointed; resume exactly where you left off after a crash |
-| **Block tracking** | Jobs that fail after 20+ attempts are moved to `blocked_jobs.json` for visibility |
+| **Block tracking** | Jobs that fail are moved to `blocked_jobs.json` with retry counters |
+| **Mid-crawl retry** | Every 30 successful detail fetches, pause main crawl to retry blocked jobs (max 2 attempts per round) |
+| **Final infinite retry** | After main crawl ends, loop until all blocked jobs are cleared — never leaves jobs behind |
 | **Multi-site support** | Add new sites via YAML mapping files — no code changes needed |
 | **Dual output** | Raw HTML preserved for cross-referencing + structured JSON in `output-final-json/` |
 | **Live dashboard** | Built-in web UI to browse crawled jobs and preview saved HTML pages |
@@ -49,6 +51,7 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 | **Bayesian scoring** | Optional Beta-Binomial + latency model with UCB exploration for probabilistic proxy prediction |
 | **LLM integration** | Optional API layer that sends raw HTML to any LLM (Claude, GPT, Gemini, Groq, Ollama) for smart data enrichment |
 | **Authentication automation** | Login automation with retry/backoff for protected sites; session health checks; re-auth on cookie expiry |
+| **job_id dedup normalization** | `job_id` is normalized to string everywhere to prevent int/str mismatch duplicates |
 
 ---
 
@@ -57,11 +60,11 @@ Crawl-Superpower-for-Bros is a **production-grade** web scraper designed to craw
 ```
 v2/
 |-- main.py              # Entry point & CLI with interactive prompts
-|-- crawler.py           # Never-stop crawl engine + CAPTCHA detection + real-time logging
+|-- crawler.py           # Never-stop crawl engine + CAPTCHA detection + retry phases
 |-- config.py            # Configuration (env vars, CLI, defaults, backend selection)
-|-- checkpoint.py        # Crash-safe state persistence
-|-- exporter.py          # Multi-format output (JSON, CSV, final JSON)
-|-- proxy_manager.py     # Proxy loading, validation, refresh
+|-- checkpoint.py        # Crash-safe state persistence + resume logic respecting blocked jobs
+|-- exporter.py          # Multi-format output (JSON, CSV, final JSON) with dedup normalization
+|-- proxy_manager.py     # Proxy loading, validation, refresh (auto-refetch on empty cache)
 |-- proxy_tracker.py     # Per-proxy scoring, auto-retirement, CAPTCHA penalty, Bayesian model
 |-- site_mappings.py     # YAML-driven site configuration system
 |-- dashboard.py         # Web UI for browsing results
@@ -72,7 +75,7 @@ v2/
 |-- sites/               # Site-specific YAML mappings
 |   `-- ekaigotenshoku.yaml
 |-- proxy/               # Proxy tools
-|   |-- fetcher.py       # 14-provider multi-country proxy fetcher
+|   |-- fetcher.py       # Multi-provider proxy fetcher (JSON APIs + HTML scraping)
 |   `-- checker.py       # Re-check cached proxies
 `-- output/              # Crawl results (auto-created)
     `-- run_YYYYMMDD_HHMMSS/
@@ -106,43 +109,33 @@ python -m cloakbrowser install
 ```bash
 cd v2
 
-# Fetch proxies for a specific country
-python proxy/fetcher.py --country japan
+# Recommended: Fetch and verify against your target site
+python proxy/fetcher.py --country japan --site ekaigotenshoku --min-good 8 --timeout-geo 10 --timeout-tgt 15
+
+# Or fetch proxies for any country
 python proxy/fetcher.py --country usa
 python proxy/fetcher.py --country europe
-
-# Fetch proxies verified against a specific site
-python proxy/fetcher.py --site ekaigotenshoku
-
-# Or specify URL + keywords manually for any site
-python proxy/fetcher.py --url "https://example.com/jobs" --keywords "求人,介護"
 ```
 
-This contacts **14 free proxy providers**, downloads proxy lists for your chosen country, verifies each one against your target site, and saves working proxies to `{country}_working_proxies.json`.
+This contacts **14+ free proxy providers** (JSON APIs and HTML scrapers), downloads proxy lists for your chosen country, verifies each one against your target site, and saves working proxies to `{country}_working_proxies.json`.
 
 **Supported countries:** `vietnam`, `japan`, `china`, `south korea`, `singapore`, `russia`, `europe`, `india`, `usa`
 
-<details>
-<summary>Proxy Providers (14 sources)</summary>
+**Proxy Providers:**
 
-| # | Provider | Type | Filter |
-|---|----------|------|--------|
-| 1 | Proxifly Country | JSON API | Pre-filtered |
-| 2 | Proxifly SOCKS5 | JSON API | Client-side |
-| 3 | Proxifly SOCKS4 | JSON API | Client-side |
-| 4 | Proxifly Global | JSON API | Client-side |
-| 5 | ProxyScrape SOCKS5 | Plain text | Pre-filtered |
-| 6 | ProxyScrape HTTP | Plain text | Pre-filtered |
-| 7 | ProxyScrape SOCKS4 | Plain text | Pre-filtered |
-| 8 | GeoNode | REST API | Pre-filtered |
-| 9 | FreeProxyList CDN | JSON API | Client-side |
-| 10 | Monosans SOCKS5 | Plain text | Client-side |
-| 11 | Monosans HTTP | Plain text | Client-side |
-| 12 | SpeedX SOCKS5 | Plain text | Client-side |
-| 13 | SpeedX HTTP | Plain text | Client-side |
-| 14 | ClarkEtM Proxy | Plain text | Client-side |
+| # | Provider | Type | Notes |
+|---|----------|------|-------|
+| 1 | Proxifly (JP CDN) | JSON API | `countries/JP/data.json` |
+| 2 | ProxyScrape (JP) | Plain text | `country=jp` endpoint |
+| 3 | GeoNode | REST API | Pre-filtered |
+| 4 | proxy-list.download (HTTP) | Plain text | Country filter |
+| 5 | proxy-list.download (SOCKS5) | Plain text | Country filter |
+| 6 | ProxyNova | HTML scraping | BeautifulSoup4 parser |
+| 7 | Spys.one (txt) | Plain text | `proxy.txt` endpoint |
+| 8 | free-proxy.cz | HTML scraping | Country table scrape |
+| 9 | Databay | HTML scraping | `free-proxy-list/japan` page |
 
-</details>
+> **Proxy cache auto-regeneration:** If you delete `japan_working_proxies.json`, the crawler will automatically regenerate it on first startup by running the fetcher.
 
 ### 3. Run the Crawler
 
@@ -179,6 +172,86 @@ python dashboard.py
 ```
 
 Opens a web UI at `http://localhost:3001` where you can browse jobs, preview HTML, and inspect crawl metadata.
+
+---
+
+## How the Never-Stop Loop Works
+
+```
++---------------------------------------------------------------+
+|  Load proxies (14+ providers, country-specific)               |
+|  +-- No proxies? Wait 60s, retry ----------------------------+ |
+|  +-- Auto-refetch after 3 failed rotations ------------------+ |
+|  +----------------------------------------------------------+ |
+|                                                                |
+|  +-- Proxy tracker seeds base scores -----------------------+ |
+|  |  Filters retired proxies, sorts by score                | |
+|  |  (heuristic or Bayesian with UCB bonus)                | |
+|  +----------------------------------------------------------+ |
+|                                                                |
+|  For each proxy (best-scored first):                           |
+|    |-- Verify target-country IP                               |
+|    |-- Detect CAPTCHA (reCAPTCHA/hCaptcha/Turnstile)         |
+|    |-- [Optional] Authenticate if site requires login         |
+|    |-- Crawl listing pages                                    |
+|    |   |-- Session health check (auth required sites)       |
+|    |   |-- CAPTCHA detection on listing pages                |
+|    |-- For each job on page:                                 |
+|    |   |-- Fetch detail HTML (with latency timing)           |
+|    |   |-- CAPTCHA detection on detail pages                 |
+|    |   |-- [Optional] Send HTML to LLM for enrichment        |
+|    |   |-- Blocked? Step up delay multiplier                 |
+|    |   |-- Save checkpoint after each fetch                   |
+|    |-- Record session to tracker (successes/failures/captcha)|
+|    |-- Proxy failed too often? Auto-retire                   |
+|    |-- Next proxy                                            |
+|                                                                |
+|  Every 30 detail fetches:                                      |
+|    |-- Pause main crawl                                      |
+|    |-- Retry blocked_jobs (max 2 attempts per job)           |
+|    |-- Resume main crawl                                     |
+|                                                                |
+|  Check stop criteria:                                          |
+|    |-- TARGET_JOBS met? -> FINAL RETRY PHASE                  |
+|    |-- MAX_PAGES met? -> FINAL RETRY PHASE                   |
+|    |-- Pages exhausted? -> FINAL RETRY PHASE                  |
+|    |-- Otherwise -> back to top                              |
+|                                                                |
+|  FINAL RETRY PHASE:                                            |
+|    |-- Loop until blocked_jobs is empty                       |
+|    |-- Never mark permanently_blocked                         |
+|    |-- No proxies? Wait and retry forever                     |
+|    |-- All cleared? -> Save results -> Print success -> DONE |
++---------------------------------------------------------------+
+```
+
+### Proxy Exhaustion Resilience
+
+If all proxies die or the cache is empty:
+- The crawler **waits 60 seconds** and retries.
+- After 3 full proxy rotations with no progress, it **auto-refetches** fresh proxies.
+- Local fallback proxies (`127.0.0.1:7890`, `1080`, etc.) are used if configured.
+- The outer `while True` loop **never breaks** due to proxy issues.
+
+### Success Exit
+
+When the crawl is truly complete:
+1. `TARGET_JOBS` met (or `MAX_PAGES` reached / pages exhausted).
+2. **All** `blocked_jobs` have been retried and cleared in the final phase.
+3. Results are saved to `jobs.json`, `jobs.csv`, and `output-final-json/`.
+4. A success banner is printed:
+   ```
+   ============================================================================
+     CRAWL COMPLETE
+   ============================================================================
+     Jobs crawled:  120
+     Output dir:    output\run_YYYYMMDD_HHMMSS
+     Raw HTML:      output\...\html\detail
+     Final JSON:    output\...\output-final-json
+     Blocked jobs:  output\...\blocked_jobs.json
+   ============================================================================
+   ```
+5. The process exits cleanly with return code 0.
 
 ---
 
@@ -306,6 +379,8 @@ All settings can be configured via environment variables, CLI arguments, or dire
 | Browser backend | `CRAWL_BROWSER_BACKEND` | `--backend` | playwright | `playwright` or `patchright` |
 | Bayesian scoring | `CRAWL_USE_BAYESIAN` | `--bayesian` | False | Beta-Binomial + latency + UCB scoring |
 | Bayesian exploration | `CRAWL_BAYESIAN_EXPLORATION` | — | 1.0 | UCB exploration bonus multiplier |
+| Mid-crawl retry interval | — | — | 30 | Retry blocked jobs every N detail fetches |
+| Mid-crawl retry attempts | — | — | 2 | Max attempts per blocked job per round |
 
 ---
 
@@ -371,64 +446,36 @@ python main.py --site my-new-site
 
 ## Block Tracking
 
-When a job's detail page is blocked or fails to load, the crawler retries it on subsequent proxy rotations. After **20 attempts** (configurable), the job is moved to `blocked_jobs.json`:
+When a job's detail page is blocked or fails to load, the crawler records it in `blocked_jobs.json`. The retry system has **two phases**:
+
+### Phase 1: Mid-Crawl Retry
+Every **30 successful detail fetches**, the main crawl pauses. All `blocked_jobs` with `status="retrying"` are retried with fresh proxies (max **2 attempts per job** in that round). Then the main crawl resumes.
+
+### Phase 2: Final Infinite Retry
+When the main crawl ends (target met, max pages reached, or pages exhausted), a **final retry phase** runs. It loops **until `blocked_jobs` is completely empty**. Jobs are **never** marked `permanently_blocked` during this phase. If no proxies are available, it waits 60 s and tries again — indefinitely.
+
+### Block File Format
 
 ```json
 {
-  "permanently_blocked": [
+  "updated_at": "2026-06-08T10:00:00",
+  "block_threshold": 20,
+  "permanently_blocked": [],
+  "still_retrying": [
     {
       "job_id": "1836924",
       "detail_url": "https://www.ekaigotenshoku.com/kyujin/detail?id=1836924",
-      "title": "介護スタッフ",
-      "retries": 20,
-      "status": "permanently_blocked"
+      "title": "Staff",
+      "retries": 3,
+      "status": "retrying"
     }
   ],
-  "still_retrying": [],
-  "total_blocked": 1
+  "total_blocked": 0,
+  "total_retrying": 1
 }
 ```
 
----
-
-## How the Never-Stop Loop Works
-
-```
-+---------------------------------------------------------------+
-|  Load proxies (14 providers, country-specific)                |
-|  +-- No proxies? Wait 60s, retry ----------------------------+ |
-|  +----------------------------------------------------------+ |
-|                                                                |
-|  +-- Proxy tracker seeds base scores -----------------------+ |
-|  |  Filters retired proxies, sorts by score                | |
-|  |  (heuristic or Bayesian with UCB bonus)                | |
-|  +----------------------------------------------------------+ |
-|                                                                |
-|  For each proxy (best-scored first):                           |
-|    |-- Verify target-country IP                               |
-|    |-- Detect CAPTCHA (reCAPTCHA/hCaptcha/Turnstile)         |
-|    |-- [Optional] Authenticate if site requires login         |
-|    |-- Crawl listing pages                                    |
-|    |   |-- Session health check (auth required sites)       |
-|    |   |-- CAPTCHA detection on listing pages                |
-|    |-- For each job on page:                                 |
-|    |   |-- Fetch detail HTML (with latency timing)           |
-|    |   |-- CAPTCHA detection on detail pages                 |
-|    |   |-- [Optional] Send HTML to LLM for enrichment        |
-|    |   |-- Blocked? Step up delay multiplier                 |
-|    |   |-- 20+ fails? -> blocked_jobs.json                  |
-|    |   |-- Save checkpoint after each fetch                  |
-|    |-- Record session to tracker (successes/failures/captcha)|
-|    |-- Proxy failed too often? Auto-retire                   |
-|    |-- Next proxy                                            |
-|                                                                |
-|  Check stop criteria:                                          |
-|    |-- TARGET_JOBS met? -> DONE                               |
-|    |-- MAX_PAGES met? -> DONE                                |
-|    |-- Both None & pages exhausted? -> DONE                  |
-|    |-- Otherwise -> back to top                              |
-+---------------------------------------------------------------+
-```
+> **Data integrity note:** All `job_id` values are normalized to `str` across the codebase (crawler, checkpoint, exporter, blocked_jobs) to prevent int/str dedup mismatches that caused duplicate records in earlier versions.
 
 ---
 
@@ -441,7 +488,7 @@ When a job's detail page is blocked or fails to load, the crawler retries it on 
 | requests | >=2.28.0 | HTTP client for proxy verification |
 | PySocks | >=1.7.1 | SOCKS proxy support |
 | pyyaml | >=6.0 | YAML site mapping parser |
-| beautifulsoup4 | >=4.12.0 | HTML parsing |
+| beautifulsoup4 | >=4.12.0 | HTML parsing (proxy scrapers) |
 
 ---
 
@@ -473,7 +520,11 @@ All log output uses ASCII-safe separators (`=` instead of Unicode box-drawing) s
 python proxy/fetcher.py --country japan
 ```
 
-This contacts 14 providers; some will fail (rate limits, geo-blocks) which is expected. As long as 2-3 providers return data, you will get a usable proxy pool.
+This contacts 14+ providers; some will fail (rate limits, geo-blocks) which is expected. As long as 2-3 providers return data, you will get a usable proxy pool.
+
+### Proxy cache auto-regeneration
+
+If you delete `japan_working_proxies.json` (or any `{country}_working_proxies.json`), the crawler will **automatically regenerate it** on the first `load_proxies()` call by running the fetcher.
 
 ### No-proxy mode
 
@@ -484,9 +535,10 @@ If the target site does not block your IP, select option `0` (No need proxy) at 
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `ImportError: attempted relative import` | Running from wrong directory | `cd v2` then `python main.py` |
-| `No proxies available - waiting 60s` | No cached proxy file | Run `python proxy/fetcher.py --country {country}` first |
+| `No proxies available - waiting 60s` | Empty cache or all proxies dead | The crawler auto-refetches. Wait, or run `python proxy/fetcher.py --country {country}` first |
 | `CloakBrowser` or `launch_async` not found | CloakBrowser not installed | `pip install cloakbrowser[geoip]` then `python -m cloakbrowser install` |
 | `[CAPTCHA] CAPTCHA detected` | Site shows CAPTCHA challenge | Switch to next proxy; consider `--backend patchright` for v3 sites |
+| Duplicate jobs in output | Fixed in v2 — `job_id` is normalized to string everywhere | Pull latest code |
 
 ---
 
