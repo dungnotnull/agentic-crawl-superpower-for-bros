@@ -595,10 +595,11 @@ HTML_UI = """<!DOCTYPE html>
             detLocation.innerText = job.location || 'N/A';
             detJobtype.innerText = job.jobType ? job.jobType.split('\\n')[0] : 'N/A';
             detRawtype.innerText = job.jobType || 'N/A';
-            if (job.page_html_path) {
-                const fileUrl = `/output/${selectedSessionId}/${job.page_html_path}`;
-                previewTitle.innerText = `Source: ${job.title}`;
-                previewSubtitle.innerText = `Crawled from: ${job.page_url || '—'}`;
+            const htmlPath = job.detail_html_path || job.page_html_path;
+            if (htmlPath) {
+                const fileUrl = `/output/${selectedSessionId}/${htmlPath}`;
+                previewTitle.innerText = `Detail: ${job.title}`;
+                previewSubtitle.innerText = `Crawled from: ${job.detail_url || job.page_url || '—'}`;
                 iframePlaceholder.style.display = 'none';
                 previewIframe.style.display = 'block';
                 previewIframe.src = fileUrl;
@@ -619,15 +620,15 @@ HTML_UI = """<!DOCTYPE html>
                     }
                 };
             } else {
-                previewTitle.innerText = `Source: ${job.title}`;
-                previewSubtitle.innerText = `Crawled from: ${job.page_url || '—'}`;
+                previewTitle.innerText = `Detail: ${job.title}`;
+                previewSubtitle.innerText = `Crawled from: ${job.detail_url || job.page_url || '—'}`;
                 previewIframe.style.display = 'none';
                 iframePlaceholder.style.display = 'flex';
                 iframePlaceholder.innerHTML = `
                     <span class="no-data-icon">⚠️</span>
                     <h3>No HTML preview file found</h3>
                     <p>This run was performed before the HTML save feature was enabled.</p>
-                    ${job.link ? `<a href="${job.link}" target="_blank" class="btn btn-primary" style="margin-top:14px;">Visit Original Link</a>` : ''}
+                    ${job.detail_url ? `<a href="${job.detail_url}" target="_blank" class="btn btn-primary" style="margin-top:14px;">Visit Original Link</a>` : ''}
                 `;
                 openTabBtn.style.display = 'none';
             }

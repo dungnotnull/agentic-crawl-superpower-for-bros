@@ -326,27 +326,7 @@ async def main() -> None:
     _safe_print(f"\n  [START] The crawl loop will NOT stop until target is met.")
     _safe_print(f"  [START] If no proxies are available, it will wait and keep searching.")
 
-    # --- Start dashboard in background ---
-    dashboard_proc = None
-    try:
-        import subprocess
-        log_file = run_dir / "dashboard.log"
-        with open(log_file, "w") as log:
-            dashboard_proc = subprocess.Popen(
-                [sys.executable, "dashboard.py", "3001"],
-                cwd=str(Path(__file__).parent),
-                stdout=log,
-                stderr=subprocess.STDOUT,
-            )
-        # Give it a moment to start
-        import time
-        time.sleep(0.5)
-        if dashboard_proc.poll() is not None:
-            _safe_print(f"  [DASHBOARD] Failed to start - see {log_file}")
-        else:
-            _safe_print(f"  [DASHBOARD] Live dashboard at http://localhost:3001")
-    except Exception as e:
-        _safe_print(f"  [DASHBOARD] Could not auto-start ({e}) - run 'python dashboard.py' manually")
+    _safe_print(f"  [DASHBOARD] Run 'python dashboard.py' in another terminal to browse results")
     _safe_print("")
 
     # Create engine and run - THE LOOP NEVER BREAKS
@@ -360,11 +340,7 @@ async def main() -> None:
         except Exception as e:
             _safe_print(f"  [TRACKER] Failed to save tracker: {e}")
 
-        # Stop dashboard on crawl completion
-        if dashboard_proc:
-            dashboard_proc.terminate()
-            dashboard_proc.wait()
-            _safe_print(f"  [DASHBOARD] Server stopped.")
+        # Dashboard runs independently; no need to stop anything here
 
     # --- Final summary ---
     _safe_print(f"\n{sep}")

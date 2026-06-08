@@ -201,10 +201,12 @@ def _record_blocked_job(state: dict, job_id: str | int, detail_url: str,
 
 
 def _save_block_file(run_dir: Path, state: dict) -> None:
-    """Write blocked jobs to a separate tracking file."""
+    """Write blocked jobs to a separate tracking file.
+
+    Always writes the file so stale entries are cleared when all jobs
+    are successfully retried.
+    """
     blocked = state.get("blocked_jobs", [])
-    if not blocked:
-        return
     perm = [b for b in blocked if b.get("status") == "permanently_blocked"]
     retrying = [b for b in blocked if b.get("status") != "permanently_blocked"]
     out = {
@@ -737,6 +739,11 @@ async def crawl_with_proxy(proxy: str, needed: int, run_dir: Path,
                 save_checkpoint(run_dir, state)
 
                 if success:
+                    # Remove from blocked list if previously blocked
+                    state["blocked_jobs"] = [
+                        b for b in state.get("blocked_jobs", [])
+                        if str(b.get("job_id", "")).strip() != str(jid).strip()
+                    ]
                     consecutive_timeouts = 0
                     new_items.append({
                         "job_id": jid, "title": job.get("title"),
