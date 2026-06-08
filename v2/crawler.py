@@ -1082,8 +1082,15 @@ class CrawlEngine:
         save_final_json(run_dir, all_results, self.mapping)
         _save_block_file(run_dir, state)
 
-        _log_banner(f"CRAWL COMPLETE — {_log_progress(len(all_results), self.config.target_jobs)} "
-                     f"in {_elapsed()}")
+        total = len(all_results)
+        target = self.config.target_jobs
+        if target and total > target:
+            bonus = total - target
+            _log_banner(f"CRAWL COMPLETE ? {target}/{target} target + {bonus} retried = {total} total jobs "
+                         f"in {_elapsed()}")
+        else:
+            _log_banner(f"CRAWL COMPLETE ? {_log_progress(total, target)} "
+                         f"in {_elapsed()}")
         return all_results
 
     async def _retry_blocked_jobs(self, run_dir: Path, state: dict,
