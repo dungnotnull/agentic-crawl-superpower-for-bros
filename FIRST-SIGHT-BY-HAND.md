@@ -1,4 +1,4 @@
-﻿# First Sight by Hand
+# First Sight by Hand
 
 Welcome! This guide walks you through crawling job listings — no coding required.
 
